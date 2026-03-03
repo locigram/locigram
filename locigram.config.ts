@@ -1,47 +1,36 @@
 import { createRegistry } from '@locigram/registry'
+import { createMicrosoft365Connector } from '@locigram/connector-microsoft365'
 import { createHaloPSAConnector } from '@locigram/connector-halopsa'
-import { createM365EmailConnector } from '@locigram/connector-m365-email'
-import { createMemoryApiConnector } from '@locigram/connector-memory-api'
+import { createNinjaOneConnector } from '@locigram/connector-ninjaone'
 import { webhookConnector } from '@locigram/connector-webhook'
-
-/**
- * Andrew's palace — locigram.config.ts
- *
- * Each connector is registered independently so they can be
- * tested, paused, or replaced without affecting the others.
- */
-
-const SURU_DB_URL = process.env.SURU_DB_URL
-  ?? 'postgresql://surubot:REDACTED_PASSWORD@YOUR_DB_HOST:5432/suru'
-
-const MEMORY_API_URL   = process.env.MEMORY_API_URL   ?? 'http://YOUR_DB_HOST:3200'
-const MEMORY_API_TOKEN = process.env.MEMORY_API_TOKEN ?? 'YOUR_API_TOKEN_HERE'
+// import { createGmailConnector } from '@locigram/connector-gmail'  // if needed
 
 export const registry = createRegistry()
 
-// ── Register connectors ───────────────────────────────────────────────────────
+// ── Microsoft 365 — email + Teams ────────────────────────────────────────────
+registry.register(createMicrosoft365Connector({
+  tenantId:     process.env.M365_TENANT_ID!,
+  clientId:     process.env.M365_CLIENT_ID!,
+  clientSecret: process.env.M365_CLIENT_SECRET!,
+  mailboxes:    (process.env.M365_MAILBOXES ?? '').split(',').filter(Boolean),
+  teamsChannels: [],  // add { teamId, channelId, label } entries as needed
+}))
 
-// 1. HaloPSA tickets from suru DB sync table
+// ── HaloPSA — support tickets ─────────────────────────────────────────────────
 registry.register(createHaloPSAConnector({
-  connectionString: SURU_DB_URL,
-  limit: 200,
+  baseUrl:      process.env.HALOPSA_BASE_URL!,
+  clientId:     process.env.HALOPSA_CLIENT_ID!,
+  clientSecret: process.env.HALOPSA_CLIENT_SECRET!,
 }))
 
-// 2. M365 email from suru DB sync table
-registry.register(createM365EmailConnector({
-  connectionString: SURU_DB_URL,
-  limit: 200,
-  maxBodyChars: 1500,
+// ── NinjaOne — devices + alerts ───────────────────────────────────────────────
+registry.register(createNinjaOneConnector({
+  clientId:     process.env.NINJAONE_CLIENT_ID!,
+  clientSecret: process.env.NINJAONE_CLIENT_SECRET!,
+  sources:      ['devices', 'alerts'],
 }))
 
-// 3. Observations + lessons from OpenClaw memory API
-registry.register(createMemoryApiConnector({
-  baseUrl: MEMORY_API_URL,
-  token:   MEMORY_API_TOKEN,
-  sources: ['observations', 'lessons'],
-}))
-
-// 4. Webhook — always on; enables manual memory push
+// ── Webhook — manual memory push (always on) ──────────────────────────────────
 registry.register(webhookConnector)
 
 export default registry

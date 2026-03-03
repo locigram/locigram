@@ -1,9 +1,9 @@
 {
-  "name": "@locigram/connector-memory-api",
+  "name": "@locigram/connector-microsoft365",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",
-  "description": "Locigram connector — OpenClaw memory API (observations + lessons)",
+  "description": "Locigram connector — Microsoft 365 email + Teams via Graph API",
   "dependencies": {
     "@locigram/core": "workspace:*",
     "zod": "latest"

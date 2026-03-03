@@ -1,2 +1,2 @@
-export { createHaloPSAConnector, halopsa } from './plugin'
+export { createHaloPSAConnector } from './plugin'
 export type { HaloPSAConnectorConfig } from './plugin'
