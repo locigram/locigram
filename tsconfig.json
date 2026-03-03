@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": {
+      "@locigram/core": ["./packages/core/src/index.ts"],
+      "@locigram/db": ["./packages/db/src/index.ts"],
+      "@locigram/vector": ["./packages/vector/src/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "dist"]
+}

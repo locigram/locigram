@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: locigram
+      POSTGRES_USER: locigram
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U locigram"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  locigram:
+    build: .
+    ports:
+      - "3000:3000"   # REST API
+      - "3001:3001"   # MCP server
+    environment:
+      DATABASE_URL: postgres://locigram:${POSTGRES_PASSWORD}@postgres:5432/locigram
+      QDRANT_URL: http://qdrant:6333
+      PALACE_ID: ${PALACE_ID}
+      API_TOKEN: ${API_TOKEN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  qdrant_data:
