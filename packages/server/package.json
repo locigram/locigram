@@ -5,14 +5,22 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "bun run --watch src/index.ts",
-    "build": "bun build src/index.ts --outdir dist --target bun"
+    "start": "bun run src/index.ts"
   },
   "dependencies": {
     "@locigram/core": "workspace:*",
     "@locigram/db": "workspace:*",
     "@locigram/vector": "workspace:*",
+    "@locigram/pipeline": "workspace:*",
+    "@locigram/truth": "workspace:*",
+    "@locigram/connector-webhook": "workspace:*",
+    "@locigram/connector-microsoft365": "workspace:*",
+    "@locigram/connector-halopsa": "workspace:*",
+    "@locigram/connector-ninjaone": "workspace:*",
+    "@locigram/connector-gmail": "workspace:*",
+    "@locigram/registry": "workspace:*",
     "hono": "latest",
-    "@hono/mcp": "latest",
+    "@hono/zod-validator": "latest",
     "@modelcontextprotocol/sdk": "latest",
     "zod": "latest"
   }
