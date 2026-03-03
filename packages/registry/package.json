@@ -1,9 +1,10 @@
 {
-  "name": "@locigram/core",
+  "name": "@locigram/registry",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",
   "dependencies": {
+    "@locigram/core": "workspace:*",
     "zod": "latest"
   }
 }
