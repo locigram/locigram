@@ -18,7 +18,7 @@ COPY tsconfig.json ./
 
 # Compile to single binary
 RUN bun build packages/server/src/index.ts \
-  --outdir dist \
+  --outfile dist/locigram \
   --target bun \
   --compile \
   --minify
