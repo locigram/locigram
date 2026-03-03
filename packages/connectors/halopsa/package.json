@@ -1,0 +1,11 @@
+{
+  "name": "@locigram/connector-halopsa",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "description": "Locigram connector — HaloPSA tickets via Postgres sync table",
+  "dependencies": {
+    "@locigram/core": "workspace:*",
+    "postgres": "latest"
+  }
+}

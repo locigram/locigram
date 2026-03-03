@@ -1,0 +1,11 @@
+{
+  "name": "@locigram/connector-memory-api",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "description": "Locigram connector — OpenClaw memory API (observations + lessons)",
+  "dependencies": {
+    "@locigram/core": "workspace:*",
+    "zod": "latest"
+  }
+}

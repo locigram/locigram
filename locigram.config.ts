@@ -1,58 +1,47 @@
-// locigram.config.ts — palace configuration + connector registration
-// Copy this file and edit for your palace.
+import { createRegistry } from '@locigram/registry'
+import { createHaloPSAConnector } from '@locigram/connector-halopsa'
+import { createM365EmailConnector } from '@locigram/connector-m365-email'
+import { createMemoryApiConnector } from '@locigram/connector-memory-api'
+import { webhookConnector } from '@locigram/connector-webhook'
 
-import type { ConnectorConfig } from '@locigram/registry'
+/**
+ * Andrew's palace — locigram.config.ts
+ *
+ * Each connector is registered independently so they can be
+ * tested, paused, or replaced without affecting the others.
+ */
 
-export default {
-  palace: {
-    id: process.env.PALACE_ID ?? 'default',
-    name: process.env.PALACE_NAME ?? 'My Palace',
-  },
+const SURU_DB_URL = process.env.SURU_DB_URL
+  ?? 'postgresql://surubot:REDACTED_PASSWORD@YOUR_DB_HOST:5432/suru'
 
-  server: {
-    port: Number(process.env.PORT ?? 3000),
-    apiToken: process.env.API_TOKEN,  // bearer token for REST + MCP
-  },
+const MEMORY_API_URL   = process.env.MEMORY_API_URL   ?? 'http://YOUR_DB_HOST:3200'
+const MEMORY_API_TOKEN = process.env.MEMORY_API_TOKEN ?? 'YOUR_API_TOKEN_HERE'
 
-  db: {
-    url: process.env.DATABASE_URL!,
-  },
+export const registry = createRegistry()
 
-  qdrant: {
-    url: process.env.QDRANT_URL ?? 'http://localhost:6333',
-    collection: process.env.QDRANT_COLLECTION ?? 'locigrams',
-  },
+// ── Register connectors ───────────────────────────────────────────────────────
 
-  // Connectors: built-in or third-party plugins
-  // Third-party: npm install locigram-connector-notion → add entry below
-  connectors: [
-    // Built-in connectors (disabled by default — enable + configure as needed)
-    {
-      plugin: '@locigram/connector-webhook',
-      enabled: true,
-      config: {},
-    },
-    {
-      plugin: '@locigram/connector-email',
-      enabled: false,
-      config: {
-        // tenant: process.env.M365_TENANT_ID,
-        // clientId: process.env.M365_CLIENT_ID,
-      },
-    },
-    {
-      plugin: '@locigram/connector-sms',
-      enabled: false,
-      config: {
-        // accountSid: process.env.TWILIO_ACCOUNT_SID,
-        // authToken: process.env.TWILIO_AUTH_TOKEN,
-      },
-    },
-    // Example third-party connector:
-    // {
-    //   plugin: 'locigram-connector-notion',
-    //   enabled: true,
-    //   config: { token: process.env.NOTION_TOKEN, databaseId: '...' },
-    // },
-  ] satisfies ConnectorConfig[],
-}
+// 1. HaloPSA tickets from suru DB sync table
+registry.register(createHaloPSAConnector({
+  connectionString: SURU_DB_URL,
+  limit: 200,
+}))
+
+// 2. M365 email from suru DB sync table
+registry.register(createM365EmailConnector({
+  connectionString: SURU_DB_URL,
+  limit: 200,
+  maxBodyChars: 1500,
+}))
+
+// 3. Observations + lessons from OpenClaw memory API
+registry.register(createMemoryApiConnector({
+  baseUrl: MEMORY_API_URL,
+  token:   MEMORY_API_TOKEN,
+  sources: ['observations', 'lessons'],
+}))
+
+// 4. Webhook — always on; enables manual memory push
+registry.register(webhookConnector)
+
+export default registry
