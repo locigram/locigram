@@ -4,10 +4,16 @@
   "private": true,
   "main": "src/index.ts",
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
-    "build": "bun build src/index.ts --outdir dist"
+    "generate": "drizzle-kit generate",
+    "migrate": "bun run src/migrate.ts",
+    "studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@locigram/core": "workspace:*"
+    "@locigram/core": "workspace:*",
+    "drizzle-orm": "latest",
+    "postgres": "latest"
+  },
+  "devDependencies": {
+    "drizzle-kit": "latest"
   }
 }
