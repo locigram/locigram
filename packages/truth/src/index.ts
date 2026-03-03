@@ -1,1 +1,6 @@
-// @locigram/truth
+export { startTruthEngine } from './scheduler'
+export type { TruthEngineConfig } from './scheduler'
+export { detectReinforcement } from './detect'
+export type { ReinforcementGroup } from './detect'
+export { promoteToTruth } from './promote'
+export { decayTruths } from './decay'
