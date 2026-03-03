@@ -2,7 +2,6 @@ import { locigrams } from '@locigram/db'
 import { eq, and, isNull } from 'drizzle-orm'
 import type { DB } from '@locigram/db'
 
-// vectorClient typed loosely — wired in app.ts with the actual VectorClient
 export function startEmbedWorker(
   db: DB,
   vectorClient: any,
@@ -16,25 +15,45 @@ export function startEmbedWorker(
     if (!running) return
     try {
       const unembedded = await db
-        .select({ id: locigrams.id, content: locigrams.content })
+        .select({
+          id:         locigrams.id,
+          content:    locigrams.content,
+          locus:      locigrams.locus,
+          sourceType: locigrams.sourceType,
+          connector:  locigrams.connector,
+          entities:   locigrams.entities,
+          confidence: locigrams.confidence,
+          createdAt:  locigrams.createdAt,
+        })
         .from(locigrams)
         .where(and(eq(locigrams.palaceId, palaceId), isNull(locigrams.embeddingId)))
         .limit(50)
 
       if (unembedded.length === 0) return
-
       console.log(`[embed-worker] embedding ${unembedded.length} locigrams`)
 
       for (const loc of unembedded) {
         try {
           const vector = await vectorClient.embed(loc.content)
-          await vectorClient.upsert(collectionName, loc.id, vector, { palace_id: palaceId })
+
+          // Payload stored in Qdrant — used for filtering at search time
+          const payload = {
+            palace_id:   palaceId,
+            locus:       loc.locus,
+            source_type: loc.sourceType,
+            connector:   loc.connector ?? loc.sourceType,
+            entities:    loc.entities,
+            confidence:  loc.confidence,
+            created_at:  loc.createdAt.toISOString(),
+          }
+
+          await vectorClient.upsert(collectionName, loc.id, vector, payload)
+
           await db.update(locigrams)
             .set({ embeddingId: loc.id })
             .where(eq(locigrams.id, loc.id))
         } catch (err) {
           console.error(`[embed-worker] failed for ${loc.id}:`, err)
-          // Continue — don't stop worker on single failure
         }
       }
     } catch (err) {
@@ -43,7 +62,7 @@ export function startEmbedWorker(
   }
 
   const interval = setInterval(tick, intervalMs)
-  tick() // run immediately on start
+  tick()
 
   return () => {
     running = false

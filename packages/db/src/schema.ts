@@ -38,13 +38,14 @@ export const locigrams = pgTable(
   {
     id:          id(),
     content:     text('content').notNull(),
-    sourceType:  text('source_type').notNull(),
-    sourceRef:   text('source_ref'),
+    sourceType:  text('source_type').notNull(),   // email|chat|sms|system|manual|webhook
+    sourceRef:   text('source_ref'),              // unique ID in source system
+    connector:   text('connector'),               // which plugin produced this (microsoft365, halopsa, etc.)
     locus:       text('locus').notNull(),
     entities:    text('entities').array().notNull().default(sql`'{}'`),
     confidence:  float4('confidence').notNull().default(1.0),
     metadata:    jsonb('metadata').notNull().default(sql`'{}'`),
-    embeddingId: text('embedding_id'),      // Qdrant point ID
+    embeddingId: text('embedding_id'),            // Qdrant point ID
     createdAt:   now(),
     expiresAt:   timestamp('expires_at', { withTimezone: true }),
     palaceId:    palaceId(),
@@ -53,6 +54,7 @@ export const locigrams = pgTable(
     index('locigrams_palace_id_idx').on(t.palaceId),
     index('locigrams_locus_idx').on(t.palaceId, t.locus),
     index('locigrams_source_type_idx').on(t.palaceId, t.sourceType),
+    index('locigrams_connector_idx').on(t.palaceId, t.connector),
     index('locigrams_created_at_idx').on(t.palaceId, t.createdAt),
     index('locigrams_expires_at_idx').on(t.expiresAt).where(sql`expires_at IS NOT NULL`),
     // GIN indexes declared in migration SQL (Drizzle doesn't support GIN natively yet)

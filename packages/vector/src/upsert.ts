@@ -1,12 +1,13 @@
 import type { QdrantClient } from '@qdrant/js-client-rest'
 
 export interface EmbeddingPayload {
-  palace_id: string
-  locus: string
+  palace_id:   string
+  locus:       string
   source_type: string
-  entities: string[]
-  confidence: number
-  created_at: string  // ISO string
+  connector:   string   // which plugin produced this
+  entities:    string[]
+  confidence:  number
+  created_at:  string   // ISO string
 }
 
 export async function upsertEmbedding(

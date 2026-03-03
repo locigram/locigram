@@ -12,6 +12,9 @@ export interface IngestResult {
   errors:  string[]
 }
 
+// Minimum extraction confidence — locigrams below this are noise and not stored
+const MIN_CONFIDENCE = 0.3
+
 export async function ingest(
   rawMemories: RawMemory[],
   db: DB,
@@ -21,7 +24,7 @@ export async function ingest(
 
   for (const raw of rawMemories) {
     try {
-      // 1. Dedup check
+      // 1. Dedup check — skip if sourceRef already exists for this palace
       if (await isDuplicate(db, config.palaceId, raw.sourceRef)) {
         result.skipped++
         continue
@@ -33,12 +36,22 @@ export async function ingest(
       // 3. Resolve entities (match or create in DB)
       const resolvedEntities = await resolveEntities(db, config.palaceId, extraction.entities)
 
-      // 4. Store each extracted locigram
+      // 4. Derive connector name from metadata (set by connector plugin)
+      const connector = (raw.metadata?.connector as string | undefined) ?? raw.sourceType
+
+      // 5. Store each extracted locigram — skip low-confidence noise
+      let storedAny = false
       for (const loc of extraction.locigrams) {
+        if (loc.confidence < MIN_CONFIDENCE) {
+          result.skipped++
+          continue
+        }
+
         const [stored] = await db.insert(locigrams).values({
           content:    loc.content,
           sourceType: raw.sourceType,
           sourceRef:  raw.sourceRef,
+          connector,
           locus:      extraction.locus,
           entities:   resolvedEntities,
           confidence: loc.confidence,
@@ -46,16 +59,23 @@ export async function ingest(
           palaceId:   config.palaceId,
         }).returning()
 
-        // 5. Store provenance
+        // 6. Store provenance in sources table
         await db.insert(sources).values({
           locigramId: stored.id,
-          connector:  raw.metadata?.connector as string ?? raw.sourceType,
+          connector,
           rawRef:     raw.sourceRef,
           palaceId:   config.palaceId,
         })
 
         result.stored++
+        storedAny = true
       }
+
+      // Count the whole raw as skipped if nothing made it through
+      if (!storedAny && extraction.locigrams.length > 0) {
+        result.skipped++
+      }
+
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       result.errors.push(`[${raw.sourceRef ?? 'unknown'}] ${msg}`)
