@@ -4,140 +4,155 @@ import type { ConnectorPlugin, RawMemory } from '@locigram/core'
 export interface SuruDbConnectorConfig {
   /**
    * Connection string to Andrew's suru Postgres DB on your-server.
-   * Default: postgresql://surubot:...@localhost:5432/suru
+   * Default pulled from SURU_DB_URL env var.
    */
   connectionString: string
 
   /**
-   * Which suru DB tables/schemas to pull from.
-   * Defaults pull from emails + halo tickets + teams messages.
+   * Optional: also connect to the memory DB for observations + lessons.
+   * Default: same host, database "memory".
    */
-  sources?: Array<'emails' | 'halo_tickets' | 'teams_messages' | 'observations' | 'lessons'>
+  memoryDbUrl?: string
+
+  sources?: Array<'emails' | 'halopsa_tickets' | 'teams_messages' | 'observations' | 'lessons'>
 }
 
-type SourceType = SuruDbConnectorConfig['sources'] extends Array<infer T> ? T : never
-
-// ── Query definitions per source ─────────────────────────────────────────────
+// ── Real suru DB schema ───────────────────────────────────────────────────────
+// comms.emails columns: id, conversation_id, subject, from_address, from_name,
+//   to_addresses, cc_addresses, body_text, body_preview, received_at, is_read,
+//   importance, has_attachments, client_id, folder, mailbox
+//
+// sync.halopsa_tickets columns: id, summary, details, status_id, status_name,
+//   tickettype_id, priority_id, priority_name, sla_id, client_id, client_name,
+//   site_id, site_name, user_id, user_name, user_email, agent_id, agent_name,
+//   category_1, category_2, category_3, source, date_occurred, date_closed,
+//   respond_by_date, fix_by_date, response_date, sla_response_state, sla_fix_state, synced_at
+//
+// memory DB: memory.observations (category, observation, confidence, source, last_confirmed, created_at)
+//            memory.lessons      (lesson, context, category, severity, source, created_at)
 
 async function pullEmails(sql: ReturnType<typeof postgres>, since?: Date): Promise<RawMemory[]> {
   const rows = since
     ? await sql`
-        SELECT message_id, subject, body_text, sender_email, received_at
+        SELECT id, subject, from_address, from_name, body_text, received_at, client_id
         FROM comms.emails
         WHERE received_at > ${since}
         ORDER BY received_at ASC
         LIMIT 500`
     : await sql`
-        SELECT message_id, subject, body_text, sender_email, received_at
+        SELECT id, subject, from_address, from_name, body_text, received_at, client_id
         FROM comms.emails
         ORDER BY received_at ASC
         LIMIT 500`
 
   return rows.map(r => ({
-    content:    `Email from ${r.sender_email}: ${r.subject}\n\n${r.body_text ?? ''}`.trim(),
+    content:    `Email from ${r.from_name ?? r.from_address}: ${r.subject}\n\n${(r.body_text ?? '').slice(0, 2000)}`.trim(),
     sourceType: 'email' as const,
-    sourceRef:  `suru:email:${r.message_id}`,
+    sourceRef:  `suru:email:${r.id}`,
     occurredAt: new Date(r.received_at),
-    metadata:   { sender: r.sender_email, subject: r.subject, connector: 'surudb' },
+    metadata:   {
+      sender:   r.from_address,
+      name:     r.from_name,
+      subject:  r.subject,
+      clientId: r.client_id,
+      connector: 'surudb',
+    },
   }))
 }
 
-async function pullHaloTickets(sql: ReturnType<typeof postgres>, since?: Date): Promise<RawMemory[]> {
+async function pullHalopsa(sql: ReturnType<typeof postgres>, since?: Date): Promise<RawMemory[]> {
   const rows = since
     ? await sql`
-        SELECT id, summary, detail, client_name, status, created_at
-        FROM ops.halo_tickets
-        WHERE created_at > ${since}
-        ORDER BY created_at ASC
+        SELECT id, summary, details, status_name, priority_name, client_name,
+               user_name, agent_name, category_1, date_occurred
+        FROM sync.halopsa_tickets
+        WHERE date_occurred > ${since}
+        ORDER BY date_occurred ASC
         LIMIT 500`
     : await sql`
-        SELECT id, summary, detail, client_name, status, created_at
-        FROM ops.halo_tickets
-        ORDER BY created_at ASC
+        SELECT id, summary, details, status_name, priority_name, client_name,
+               user_name, agent_name, category_1, date_occurred
+        FROM sync.halopsa_tickets
+        ORDER BY date_occurred ASC
         LIMIT 500`
 
-  return rows.map(r => ({
-    content:    `HaloPSA Ticket #${r.id} [${r.status}] for ${r.client_name}: ${r.summary}\n${r.detail ?? ''}`.trim(),
-    sourceType: 'system' as const,
-    sourceRef:  `suru:halo:${r.id}`,
-    occurredAt: new Date(r.created_at),
-    metadata:   { client: r.client_name, status: r.status, ticketId: r.id, connector: 'surudb' },
-  }))
-}
+  return rows.map(r => {
+    const parts = [
+      `HaloPSA Ticket #${r.id} [${r.status_name}/${r.priority_name}]`,
+      `Client: ${r.client_name}`,
+      r.user_name  ? `User: ${r.user_name}`   : null,
+      r.agent_name ? `Agent: ${r.agent_name}` : null,
+      r.category_1 ? `Category: ${r.category_1}` : null,
+      `Summary: ${r.summary}`,
+      r.details    ? `\n${(r.details as string).slice(0, 1000)}` : null,
+    ].filter(Boolean)
 
-async function pullTeamsMessages(sql: ReturnType<typeof postgres>, since?: Date): Promise<RawMemory[]> {
-  const rows = since
-    ? await sql`
-        SELECT id, content, sender_name, sent_at, channel_name
-        FROM comms.teams_messages
-        WHERE sent_at > ${since}
-        ORDER BY sent_at ASC
-        LIMIT 500`
-    : await sql`
-        SELECT id, content, sender_name, sent_at, channel_name
-        FROM comms.teams_messages
-        ORDER BY sent_at ASC
-        LIMIT 500`
-
-  return rows.map(r => ({
-    content:    `Teams message from ${r.sender_name} in ${r.channel_name}: ${r.content}`.trim(),
-    sourceType: 'chat' as const,
-    sourceRef:  `suru:teams:${r.id}`,
-    occurredAt: new Date(r.sent_at),
-    metadata:   { sender: r.sender_name, channel: r.channel_name, connector: 'surudb' },
-  }))
+    return {
+      content:    parts.join('\n').trim(),
+      sourceType: 'system' as const,
+      sourceRef:  `suru:halo:${r.id}`,
+      occurredAt: new Date(r.date_occurred),
+      metadata:   {
+        client:   r.client_name,
+        status:   r.status_name,
+        priority: r.priority_name,
+        ticketId: r.id,
+        connector: 'surudb',
+      },
+    }
+  })
 }
 
 async function pullObservations(sql: ReturnType<typeof postgres>, since?: Date): Promise<RawMemory[]> {
   const rows = since
     ? await sql`
         SELECT id, observation, category, source, created_at
-        FROM public.observations
+        FROM memory.observations
         WHERE created_at > ${since}
         ORDER BY created_at ASC
         LIMIT 500`
     : await sql`
         SELECT id, observation, category, source, created_at
-        FROM public.observations
+        FROM memory.observations
         ORDER BY created_at ASC
         LIMIT 500`
 
   return rows.map(r => ({
-    content:    r.observation,
+    content:    r.observation as string,
     sourceType: 'system' as const,
-    sourceRef:  `suru:observation:${r.id}`,
+    sourceRef:  `memory:observation:${r.id}`,
     occurredAt: new Date(r.created_at),
-    metadata:   { category: r.category, source: r.source, connector: 'surudb' },
+    metadata:   { category: r.category, source: r.source, connector: 'surudb-memory' },
   }))
 }
 
 async function pullLessons(sql: ReturnType<typeof postgres>, since?: Date): Promise<RawMemory[]> {
   const rows = since
     ? await sql`
-        SELECT id, lesson, context, category, created_at
-        FROM public.lessons
+        SELECT id, lesson, context, category, severity, created_at
+        FROM memory.lessons
         WHERE created_at > ${since}
         ORDER BY created_at ASC
         LIMIT 500`
     : await sql`
-        SELECT id, lesson, context, category, created_at
-        FROM public.lessons
+        SELECT id, lesson, context, category, severity, created_at
+        FROM memory.lessons
         ORDER BY created_at ASC
         LIMIT 500`
 
   return rows.map(r => ({
-    content:    `Lesson [${r.category}]: ${r.lesson}${r.context ? `\nContext: ${r.context}` : ''}`,
+    content:    `Lesson [${r.category}/${r.severity}]: ${r.lesson}${r.context ? `\nContext: ${r.context}` : ''}`,
     sourceType: 'system' as const,
-    sourceRef:  `suru:lesson:${r.id}`,
+    sourceRef:  `memory:lesson:${r.id}`,
     occurredAt: new Date(r.created_at),
-    metadata:   { category: r.category, connector: 'surudb' },
+    metadata:   { category: r.category, severity: r.severity, connector: 'surudb-memory' },
   }))
 }
 
 // ── Connector plugin ──────────────────────────────────────────────────────────
 
 export function createSuruDbConnector(config: SuruDbConnectorConfig): ConnectorPlugin {
-  const sources = config.sources ?? ['emails', 'halo_tickets', 'teams_messages', 'observations', 'lessons']
+  const sources = config.sources ?? ['emails', 'halopsa_tickets', 'observations', 'lessons']
 
   return {
     name: 'surudb',
@@ -147,19 +162,21 @@ export function createSuruDbConnector(config: SuruDbConnectorConfig): ConnectorP
     },
 
     async pull(since?: Date): Promise<RawMemory[]> {
-      const sql = postgres(config.connectionString, { max: 3, idle_timeout: 30 })
+      const suruSql   = postgres(config.connectionString, { max: 3, idle_timeout: 30 })
+      // memory DB — same host, different database
+      const memoryUrl = config.memoryDbUrl
+        ?? config.connectionString.replace(/\/\w+$/, '/memory')
+      const memorySql = postgres(memoryUrl, { max: 3, idle_timeout: 30 })
       const results: RawMemory[] = []
 
       try {
-        for (const source of sources) {
-          if (source === 'emails')         results.push(...await pullEmails(sql, since))
-          if (source === 'halo_tickets')   results.push(...await pullHaloTickets(sql, since))
-          if (source === 'teams_messages') results.push(...await pullTeamsMessages(sql, since))
-          if (source === 'observations')   results.push(...await pullObservations(sql, since))
-          if (source === 'lessons')        results.push(...await pullLessons(sql, since))
-        }
+        if (sources.includes('emails'))          results.push(...await pullEmails(suruSql, since))
+        if (sources.includes('halopsa_tickets')) results.push(...await pullHalopsa(suruSql, since))
+        if (sources.includes('observations'))    results.push(...await pullObservations(memorySql, since))
+        if (sources.includes('lessons'))         results.push(...await pullLessons(memorySql, since))
       } finally {
-        await sql.end()
+        await suruSql.end()
+        await memorySql.end()
       }
 
       return results
