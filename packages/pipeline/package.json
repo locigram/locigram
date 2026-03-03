@@ -7,6 +7,8 @@
     "@locigram/core": "workspace:*",
     "@locigram/db": "workspace:*",
     "@locigram/vector": "workspace:*",
-    "zod": "latest"
+    "zod": "latest",
+    "drizzle-orm": "latest",
+    "postgres": "latest"
   }
 }

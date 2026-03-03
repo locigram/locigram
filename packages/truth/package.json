@@ -6,6 +6,8 @@
   "dependencies": {
     "@locigram/core": "workspace:*",
     "@locigram/db": "workspace:*",
-    "zod": "latest"
+    "zod": "latest",
+    "drizzle-orm": "latest",
+    "postgres": "latest"
   }
 }
