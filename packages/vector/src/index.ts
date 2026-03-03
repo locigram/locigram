@@ -1,1 +1,9 @@
-// @locigram/vector
+export { createVectorClient } from './client'
+export type { VectorClient, VectorConfig } from './client'
+export { embed } from './embed'
+export { ensureCollection } from './collections'
+export { upsertEmbedding } from './upsert'
+export type { EmbeddingPayload } from './upsert'
+export { searchSimilar } from './search'
+export type { SearchOptions, SearchResult } from './search'
+export { deleteEmbedding } from './delete'

@@ -1,0 +1,79 @@
+import { z } from 'zod'
+import type { RawMemory } from '@locigram/core'
+import type { PipelineConfig } from './config'
+
+const ExtractionSchema = z.object({
+  entities: z.array(z.object({
+    name:    z.string(),
+    type:    z.enum(['person', 'org', 'product', 'topic', 'place']),
+    aliases: z.array(z.string()).default([]),
+  })),
+  locus:     z.string(),
+  locigrams: z.array(z.object({
+    content:    z.string(),
+    confidence: z.number().min(0).max(1),
+  })),
+})
+
+export type ExtractionResult = z.infer<typeof ExtractionSchema>
+
+const SYSTEM_PROMPT = `You are a memory extraction assistant. Given text, extract:
+1. Named entities (people, orgs, products, topics, places)
+2. The best memory namespace (locus) — use format: "people/name", "business/orgname", "technical/topic", "personal/topic", "project/name"
+3. Discrete memory units (locigrams) — individual facts or events in plain language
+
+Return ONLY valid JSON matching this schema:
+{
+  "entities": [{ "name": string, "type": "person"|"org"|"product"|"topic"|"place", "aliases": string[] }],
+  "locus": string,
+  "locigrams": [{ "content": string, "confidence": number (0-1) }]
+}`
+
+function fallback(raw: RawMemory): ExtractionResult {
+  return {
+    entities: [],
+    locus: 'personal/general',
+    locigrams: [{ content: raw.content, confidence: 0.5 }],
+  }
+}
+
+export async function extractFromRaw(
+  raw: RawMemory,
+  config: PipelineConfig,
+): Promise<ExtractionResult> {
+  try {
+    const res = await fetch(`${config.llmUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: config.llmModel,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: raw.content },
+        ],
+        temperature: 0.1,
+        response_format: { type: 'json_object' },
+      }),
+    })
+
+    if (!res.ok) {
+      console.warn(`[pipeline] extraction LLM error: ${res.status}`)
+      return fallback(raw)
+    }
+
+    const data = await res.json() as { choices: Array<{ message: { content: string } }> }
+    const content = data?.choices?.[0]?.message?.content
+    if (!content) return fallback(raw)
+
+    const parsed = ExtractionSchema.safeParse(JSON.parse(content))
+    if (!parsed.success) {
+      console.warn('[pipeline] extraction schema mismatch:', parsed.error.message)
+      return fallback(raw)
+    }
+
+    return parsed.data
+  } catch (err) {
+    console.warn('[pipeline] extraction failed:', err)
+    return fallback(raw)
+  }
+}

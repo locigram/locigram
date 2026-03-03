@@ -1,1 +1,9 @@
-// @locigram/pipeline
+export { ingest } from './ingest'
+export type { IngestResult } from './ingest'
+export { startEmbedWorker } from './worker'
+export { extractFromRaw } from './extract'
+export type { ExtractionResult } from './extract'
+export { resolveEntities } from './resolve'
+export { isDuplicate } from './dedup'
+export type { PipelineConfig } from './config'
+export { defaultPipelineConfig } from './config'
