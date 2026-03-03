@@ -3,8 +3,10 @@ import { logger } from 'hono/logger'
 import { cors } from 'hono/cors'
 import { createDb } from '@locigram/db'
 import { createVectorClient, ensureCollection, embed, searchSimilar } from '@locigram/vector'
-import { startEmbedWorker } from '@locigram/pipeline'
+import { startEmbedWorker, defaultPipelineConfig } from '@locigram/pipeline'
+import type { PipelineConfig } from '@locigram/pipeline'
 import { startTruthEngine } from '@locigram/truth'
+import { buildWebhookRoute } from '@locigram/connector-webhook'
 import { palaceMiddleware } from './middleware/palace'
 import { authMiddleware } from './middleware/auth'
 import { healthRoute } from './routes/health'
@@ -14,6 +16,7 @@ import { truthsRoute } from './routes/truths'
 import { peopleRoute } from './routes/people'
 import { timelineRoute } from './routes/timeline'
 import { feedbackRoute } from './routes/feedback'
+import { bootstrapRoute } from './routes/bootstrap'
 import { buildTools } from './mcp/tools'
 
 export interface AppConfig {
@@ -23,10 +26,20 @@ export interface AppConfig {
   qdrantUrl:      string
   embeddingUrl:   string
   embeddingModel: string
+  llmUrl?:        string
+  llmModel?:      string
 }
 
 export function createApp(config: AppConfig) {
   const db = createDb(config.databaseUrl)
+
+  // Pipeline config — shared across routes and workers
+  const pipelineConfig: PipelineConfig = {
+    ...defaultPipelineConfig(),
+    palaceId: config.palaceId,
+    llmUrl:   config.llmUrl   ?? process.env.MIDRANGE_LB_URL ?? 'http://YOUR_K8S_NODE_IP:30891/v1',
+    llmModel: config.llmModel ?? process.env.EXTRACTION_MODEL ?? 'qwen3.5-35b-a3b',
+  }
 
   // Vector client — wraps Qdrant + embedding model
   const { client: qdrant } = createVectorClient({
@@ -72,6 +85,7 @@ export function createApp(config: AppConfig) {
   app.use('*', palaceMiddleware(db, config.palaceId))
   app.use('*', async (c, next) => {
     c.set('vectorClient', vectorClient)
+    c.set('pipelineConfig', pipelineConfig)
     await next()
   })
 
@@ -80,12 +94,14 @@ export function createApp(config: AppConfig) {
 
   // ── Authenticated REST API ─────────────────────────────────────────────────
   app.use('/api/*', authMiddleware)
-  app.route('/api/remember', rememberRoute)
-  app.route('/api/recall',   recallRoute)
-  app.route('/api/truths',   truthsRoute)
-  app.route('/api/people',   peopleRoute)
-  app.route('/api/timeline', timelineRoute)
-  app.route('/api/feedback', feedbackRoute)
+  app.route('/api/remember',  rememberRoute)
+  app.route('/api/recall',    recallRoute)
+  app.route('/api/truths',    truthsRoute)
+  app.route('/api/people',    peopleRoute)
+  app.route('/api/timeline',  timelineRoute)
+  app.route('/api/feedback',  feedbackRoute)
+  app.route('/api/webhook',   buildWebhookRoute())
+  app.route('/api/bootstrap', bootstrapRoute)
 
   // ── MCP endpoint ───────────────────────────────────────────────────────────
   app.all('/mcp/*', async (c) => {

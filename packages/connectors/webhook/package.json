@@ -4,6 +4,7 @@
   "private": true,
   "main": "src/index.ts",
   "dependencies": {
-    "@locigram/core": "workspace:*"
+    "@locigram/core": "workspace:*",
+    "zod": "latest"
   }
 }
