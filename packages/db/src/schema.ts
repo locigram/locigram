@@ -2,7 +2,7 @@ import {
   pgTable,
   uuid,
   text,
-  float4,
+  real,
   integer,
   jsonb,
   timestamp,
@@ -43,7 +43,7 @@ export const locigrams = pgTable(
     connector:   text('connector'),               // which plugin produced this (microsoft365, halopsa, etc.)
     locus:       text('locus').notNull(),
     entities:    text('entities').array().notNull().default(sql`'{}'`),
-    confidence:  float4('confidence').notNull().default(1.0),
+    confidence:  real('confidence').notNull().default(1.0),
     metadata:    jsonb('metadata').notNull().default(sql`'{}'`),
     embeddingId: text('embedding_id'),            // Qdrant point ID
     createdAt:   now(),
@@ -70,7 +70,7 @@ export const truths = pgTable(
     statement:   text('statement').notNull(),
     locus:       text('locus').notNull(),
     entities:    text('entities').array().notNull().default(sql`'{}'`),
-    confidence:  float4('confidence').notNull().default(0.0),
+    confidence:  real('confidence').notNull().default(0.0),
     sourceCount: integer('source_count').notNull().default(1),
     lastSeen:    timestamp('last_seen', { withTimezone: true }).notNull().defaultNow(),
     createdAt:   now(),
