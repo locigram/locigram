@@ -5,6 +5,8 @@
   "main": "src/index.ts",
   "dependencies": {
     "@locigram/core": "workspace:*",
-    "zod": "latest"
+    "zod": "latest",
+    "hono": "latest",
+    "@hono/zod-validator": "latest"
   }
 }
