@@ -179,7 +179,7 @@ LOCIGRAM_M365_MAILBOXES=you@company.com,support@company.com
 
 **What it ingests:** Channel messages from configured Teams channels. Individual messages are **grouped by reply thread**, and the full thread is sent to the LLM as a single unit once the thread goes quiet (2 hours with no new replies).
 
-**Why thread-based?** A single message like "OK sounds good" is meaningless. The reply chain "Acme Corp firewall throwing alerts → blocked the IP → resolved, customer notified" is a complete locigram. Splitting it loses the context.
+**Why thread-based?** A single message like "OK sounds good" is meaningless. The reply chain "Client firewall throwing alerts → blocked the IP → resolved, customer notified" is a complete locigram. Splitting it loses the context.
 
 **Filters applied:** Bot/webhook messages, system events, pure acknowledgement messages ("ok", "thanks", "👍"), and threads under 20 total words are all dropped.
 
@@ -447,7 +447,7 @@ Every memory unit ever stored. One table, all sources. Columns handle the segmen
 | `expires_at` | `TIMESTAMPTZ` | `NULL` | `NULL` = active. Set when superseded (reference data) or decayed below threshold (knowledge). Record is kept for audit — never deleted. |
 | **Classification** | | | |
 | `locus` | `TEXT` | — | Memory namespace. Format: `people/name`, `business/orgname`, `technical/topic`, `personal/topic`, `project/name`, `agent/name`. Used for scoped recall. |
-| `client_id` | `TEXT` | `NULL` | First-class MSP client filter. Allows "show me everything about Acme Corp" across all connectors. |
+| `client_id` | `TEXT` | `NULL` | First-class MSP client filter. Allows "show me everything about a client" across all connectors. |
 | `importance` | `TEXT` | `normal` | `low` / `normal` / `high`. Inherited from source metadata (email importance, ticket priority). |
 | **Storage tier** | | | |
 | `tier` | `TEXT` | `hot` | Controls Qdrant inclusion. `hot` = recent + high-confidence + reference → active in Qdrant. `warm` = older / lower-confidence → still in Qdrant. `cold` = archived / superseded / decayed → Postgres only, removed from Qdrant index. Keeps vector memory lean as data grows. |
@@ -600,7 +600,7 @@ Named entity registry. Every person, org, product, topic, or place mentioned acr
 | `id` | `UUID PK` | — |
 | `name` | `TEXT` | Canonical name. `UNIQUE(palace_id, name)`. |
 | `type` | `TEXT` | `person` / `org` / `product` / `topic` / `place` |
-| `aliases` | `TEXT[]` | Alternative names and abbreviations. GIN-indexed. Extraction checks aliases before creating a new entity — prevents duplicates like "Acme Corp" vs "Acme Corp & Co". |
+| `aliases` | `TEXT[]` | Alternative names and abbreviations. GIN-indexed. Extraction checks aliases before creating a new entity — prevents duplicates like "Acme Corp" vs "Acme Corporation". |
 | `metadata` | `JSONB` | Additional structured data (email, phone, URL, etc.) |
 | `palace_id` | `TEXT FK` | — |
 | `created_at` | `TIMESTAMPTZ` | — |
