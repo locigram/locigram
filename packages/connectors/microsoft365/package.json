@@ -6,6 +6,7 @@
   "description": "Locigram connector — Microsoft 365 email + Teams via Graph API",
   "dependencies": {
     "@locigram/core": "workspace:*",
+    "@locigram/db": "workspace:*",
     "zod": "latest"
   }
 }

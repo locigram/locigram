@@ -1,4 +1,5 @@
 import type { ConnectorPlugin, RawMemory } from '@locigram/core'
+import type { DB } from '@locigram/db'
 import { getGraphToken } from './auth'
 import { pullEmails } from './email'
 import { pullTeamsMessages } from './teams'
@@ -17,6 +18,12 @@ export interface Microsoft365ConnectorConfig {
 
   /** Max emails per mailbox per pull (default 100) */
   emailLimit?: number
+
+  /** DB instance for cursor-based batch mode (optional) */
+  db?: DB
+
+  /** Palace ID for cursor-based batch mode (optional) */
+  palaceId?: string
 }
 
 export function createMicrosoft365Connector(config: Microsoft365ConnectorConfig): ConnectorPlugin {
@@ -35,7 +42,17 @@ export function createMicrosoft365Connector(config: Microsoft365ConnectorConfig)
       const results: RawMemory[] = []
 
       if (config.mailboxes?.length) {
-        const emails = await pullEmails(token, config.mailboxes, since, config.emailLimit ?? 100)
+        const batch = config.db && config.palaceId
+          ? { db: config.db, palaceId: config.palaceId }
+          : undefined
+
+        const emails = await pullEmails(
+          token,
+          config.mailboxes,
+          since,
+          config.emailLimit ?? 100,
+          batch,
+        )
         results.push(...emails)
       }
 

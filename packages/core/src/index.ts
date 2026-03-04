@@ -98,12 +98,13 @@ export interface RawMemory {
   // When set, the pipeline skips LLM extraction and uses these values directly.
   // Use for financial records, device inventory, contacts — anything already structured.
   preClassified?: {
-    locus:         string
-    entities:      string[]              // resolved entity names
-    isReference:   boolean
-    referenceType?: string
-    importance?:   'low' | 'normal' | 'high'
-    clientId?:     string
+    locus:              string
+    entities:           string[]              // resolved entity names
+    isReference:        boolean
+    referenceType?:     string
+    importance?:        'low' | 'normal' | 'high'
+    clientId?:          string
+    clusterCandidate?:  boolean               // true → cluster worker groups related items
   }
 }
 

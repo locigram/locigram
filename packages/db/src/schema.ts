@@ -183,6 +183,21 @@ export const retrievalEvents = pgTable('retrieval_events', {
   retrievedAt: timestamp('retrieved_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// ── sync_cursors ─────────────────────────────────────────────────────────────
+
+export const syncCursors = pgTable(
+  'sync_cursors',
+  {
+    palaceId:  text('palace_id').notNull(),
+    source:    text('source').notNull(),       // e.g. 'm365-email', 'm365-teams', 'halopsa'
+    cursor:    text('cursor').notNull(),        // ISO timestamp or opaque string
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('sync_cursors_pk').on(t.palaceId, t.source),
+  ],
+)
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type Palace    = typeof palaces.$inferSelect
@@ -191,6 +206,7 @@ export type Truth     = typeof truths.$inferSelect
 export type Entity    = typeof entities.$inferSelect
 export type Source          = typeof sources.$inferSelect
 export type RetrievalEvent = typeof retrievalEvents.$inferSelect
+export type SyncCursor     = typeof syncCursors.$inferSelect
 
 export type NewPalace          = typeof palaces.$inferInsert
 export type NewLocigram        = typeof locigrams.$inferInsert
@@ -198,6 +214,7 @@ export type NewTruth           = typeof truths.$inferInsert
 export type NewEntity          = typeof entities.$inferInsert
 export type NewSource          = typeof sources.$inferInsert
 export type NewRetrievalEvent  = typeof retrievalEvents.$inferInsert
+export type NewSyncCursor      = typeof syncCursors.$inferInsert
 
 // ── Reference type constants ──────────────────────────────────────────────────
 

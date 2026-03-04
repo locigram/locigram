@@ -80,6 +80,7 @@ export async function ingest(
           referenceType: extraction.referenceType ?? null,
           entities:      resolvedEntities,
           confidence:    loc.confidence,
+          clusterCandidate: raw.preClassified?.clusterCandidate ?? false,
           metadata:      raw.metadata ?? {},
           palaceId:      config.palaceId,
         }).returning()

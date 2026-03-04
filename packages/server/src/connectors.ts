@@ -4,8 +4,9 @@
  */
 import { registry } from '@locigram/registry'
 import { webhookConnector } from '@locigram/connector-webhook'
+import type { DB } from '@locigram/db'
 
-export function autoRegisterConnectors() {
+export function autoRegisterConnectors(opts?: { db?: DB; palaceId?: string }) {
 
   // Webhook is always on — zero config needed
   registry.register(webhookConnector)
@@ -22,6 +23,8 @@ export function autoRegisterConnectors() {
         clientSecret: process.env.LOCIGRAM_M365_CLIENT_SECRET!,
         mailboxes:    (process.env.LOCIGRAM_M365_MAILBOXES ?? '').split(',').filter(Boolean),
         teamsChannels: [],
+        db:           opts?.db,
+        palaceId:     opts?.palaceId,
       }))
       console.log('[connectors] ✓ microsoft365')
     }).catch(e => console.warn('[connectors] microsoft365 load failed:', e))

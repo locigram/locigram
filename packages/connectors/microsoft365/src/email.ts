@@ -1,6 +1,8 @@
 import { graphGet } from './auth'
 import type { RawMemory } from '@locigram/core'
-import { shouldSkipEmail, SKIP_EMAIL_FOLDERS } from './filters'
+import type { DB } from '@locigram/db'
+import { getCursor, setCursor } from '@locigram/db'
+import { shouldSkipEmail } from './filters'
 
 // All fields we pull from the Graph API per message
 const SELECT = [
@@ -25,6 +27,9 @@ const SELECT = [
   'flag',
 ].join(',')
 
+const BATCH_SIZE    = Number(process.env.LOCIGRAM_M365_EMAIL_BATCH_SIZE)    || 50
+const BACKFILL_DAYS = Number(process.env.LOCIGRAM_M365_EMAIL_BACKFILL_DAYS) || 90
+
 function extractAddresses(recipients: any[]): string[] {
   return (recipients ?? [])
     .map((r: any) => r?.emailAddress?.address)
@@ -37,87 +42,139 @@ function extractNames(recipients: any[]): string[] {
     .filter(Boolean)
 }
 
+function normalizeImportance(raw?: string): 'low' | 'normal' | 'high' {
+  if (!raw) return 'normal'
+  const v = raw.toLowerCase()
+  if (v === 'high' || v === 'urgent' || v === 'critical') return 'high'
+  if (v === 'low') return 'low'
+  return 'normal'
+}
+
+export interface EmailBatchConfig {
+  db:       DB
+  palaceId: string
+}
+
 export async function pullEmails(
   token:     string,
   mailboxes: string[],
   since?:    Date,
   limit      = 100,
+  batch?:    EmailBatchConfig,
 ): Promise<RawMemory[]> {
   const results: RawMemory[] = []
+  const batchSize = batch ? BATCH_SIZE : limit
 
   for (const mailbox of mailboxes) {
-    let url: string | null = buildUrl(mailbox, since, limit)
+    // Resolve start cursor
+    let startDate = since
 
-    while (url) {
-      const data  = await graphGet(token, url) as any
-      const items = (data.value ?? []) as any[]
-
-      for (const msg of items) {
-        // Skip drafts — they're not real communications yet
-        if (msg.isDraft) continue
-
-        const from         = msg.from?.emailAddress
-        const toAddresses  = extractAddresses(msg.toRecipients)
-        const toNames      = extractNames(msg.toRecipients)
-        const ccAddresses  = extractAddresses(msg.ccRecipients)
-        const body         = msg.body?.content ?? msg.bodyPreview ?? ''
-        const snippet      = stripHtml(body).slice(0, 2000)
-
-        // Build human-readable content for LLM extraction
-        const content = [
-          `Email from ${from?.name ?? from?.address ?? 'unknown'} to ${toNames.join(', ')}`,
-          `Subject: ${msg.subject}`,
-          ccAddresses.length > 0 ? `CC: ${ccAddresses.join(', ')}` : null,
-          '',
-          snippet,
-        ].filter(Boolean).join('\n').trim()
-
-        results.push({
-          content,
-          sourceType: 'email',
-          sourceRef:  `m365:email:${msg.id}`,
-
-          // When the email was received — this is `occurred_at` in the DB
-          occurredAt: new Date(msg.receivedDateTime),
-
-          metadata: {
-            // Identity
-            connector:       'microsoft365',
-            mailbox,                          // which mailbox this came from
-
-            // Sender
-            sender:          from?.address,
-            sender_name:     from?.name,
-
-            // Recipients
-            to:              toAddresses,
-            to_names:        toNames,
-            cc:              ccAddresses,
-            bcc:             extractAddresses(msg.bccRecipients),
-
-            // Message info
-            subject:         msg.subject,
-            body_preview:    msg.bodyPreview,
-            importance:      msg.importance,         // low | normal | high
-            has_attachments: msg.hasAttachments,     // boolean
-            is_read:         msg.isRead,             // boolean
-            categories:      msg.categories ?? [],   // user-defined tags
-
-            // Threading
-            conversation_id: msg.conversationId,     // thread grouping key
-
-            // Timestamps
-            received_at:     msg.receivedDateTime,   // ISO string (also in occurredAt)
-            sent_at:         msg.sentDateTime,        // when sender sent it (may differ from received)
-
-            // Follow-up flag
-            flag_status:     msg.flag?.flagStatus,   // notFlagged | flagged | complete
-          },
-        })
+    if (batch) {
+      const saved = await getCursor(batch.db, batch.palaceId, 'm365-email')
+      if (saved) {
+        startDate = new Date(saved)
+      } else if (!since) {
+        startDate = new Date(Date.now() - BACKFILL_DAYS * 86_400_000)
       }
-
-      url = data['@odata.nextLink'] ?? null
     }
+
+    const url = buildUrl(mailbox, startDate, batchSize)
+    const data  = await graphGet(token, url) as any
+    const items = (data.value ?? []) as any[]
+
+    let lastReceivedAt: string | null = null
+
+    for (const msg of items) {
+      if (msg.isDraft) continue
+
+      const from         = msg.from?.emailAddress
+      const senderAddr   = from?.address ?? ''
+      const senderName   = from?.name ?? ''
+      const toAddresses  = extractAddresses(msg.toRecipients)
+      const toNames      = extractNames(msg.toRecipients)
+      const ccAddresses  = extractAddresses(msg.ccRecipients)
+      const body         = msg.body?.content ?? msg.bodyPreview ?? ''
+      const snippet      = stripHtml(body).slice(0, 2000)
+
+      // Apply noise filters
+      const filterResult = shouldSkipEmail({
+        sender:     senderAddr,
+        subject:    msg.subject,
+        bodyText:   snippet,
+        isDraft:    msg.isDraft,
+        categories: msg.categories,
+      })
+      if (filterResult.skip) continue
+
+      // Human-readable content (no HTML)
+      const content = [
+        `From: ${senderName || senderAddr}${senderAddr ? ` <${senderAddr}>` : ''}`,
+        `To: ${toNames.join(', ')}`,
+        `Subject: ${msg.subject}`,
+        `Date: ${msg.receivedDateTime}`,
+        '',
+        snippet,
+      ].join('\n').trim()
+
+      // Collect entity names for preClassified
+      const entityNames = [senderName, ...toNames].filter(Boolean)
+
+      results.push({
+        content,
+        sourceType: 'email',
+        sourceRef:  `m365:email:${msg.id}`,
+        occurredAt: new Date(msg.receivedDateTime),
+
+        preClassified: {
+          locus:            'business/email',
+          entities:         entityNames,
+          isReference:      false,
+          referenceType:    undefined,
+          importance:       normalizeImportance(msg.importance),
+          clientId:         undefined,
+          clusterCandidate: true,
+        },
+
+        metadata: {
+          connector:       'microsoft365',
+          mailbox,
+
+          sender:          senderAddr,
+          sender_name:     senderName,
+
+          to:              toAddresses,
+          to_names:        toNames,
+          cc:              ccAddresses,
+          bcc:             extractAddresses(msg.bccRecipients),
+
+          subject:         msg.subject,
+          body_preview:    msg.bodyPreview,
+          importance:      msg.importance,
+          has_attachments: msg.hasAttachments,
+          is_read:         msg.isRead,
+          categories:      msg.categories ?? [],
+
+          conversation_id: msg.conversationId,
+
+          received_at:     msg.receivedDateTime,
+          sent_at:         msg.sentDateTime,
+
+          flag_status:     msg.flag?.flagStatus,
+        },
+      })
+
+      lastReceivedAt = msg.receivedDateTime
+    }
+
+    // In batch mode: do NOT follow @odata.nextLink — process one page per sync run
+    // Update cursor to last email's receivedDateTime
+    if (batch && lastReceivedAt) {
+      await setCursor(batch.db, batch.palaceId, 'm365-email', lastReceivedAt)
+    }
+  }
+
+  if (batch) {
+    console.log(`[m365-email] batch: ${results.length} emails, cursor: ${results.length > 0 ? results[results.length - 1].occurredAt?.toISOString() : 'unchanged'}`)
   }
 
   return results
@@ -126,12 +183,12 @@ export async function pullEmails(
 function buildUrl(mailbox: string, since: Date | undefined, limit: number): string {
   const params = new URLSearchParams({
     '$select':  SELECT,
-    '$top':     String(Math.min(limit, 100)), // Graph API max per page = 1000, but keep batches small
+    '$top':     String(Math.min(limit, 100)),
     '$orderby': 'receivedDateTime ASC',
   })
 
   if (since) {
-    params.set('$filter', `receivedDateTime gt ${since.toISOString()} and isDraft eq false`)
+    params.set('$filter', `receivedDateTime ge ${since.toISOString()} and isDraft eq false`)
   } else {
     params.set('$filter', 'isDraft eq false')
   }
