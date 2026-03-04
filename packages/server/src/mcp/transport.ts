@@ -63,8 +63,12 @@ export function createMcpHandler(
     // Bearer auth (only if apiToken configured)
     if (apiToken) {
       const authHeader = req.headers.get('Authorization') ?? req.headers.get('authorization') ?? ''
-      const token = authHeader.replace(/^[Bb]earer\s+/, '')
-      console.log(`[mcp-auth] method=${req.method} auth-header=${authHeader.substring(0, 32) || '(none)'} token-prefix=${token.substring(0, 16) || '(none)'} expected-prefix=${apiToken.substring(0, 16)}`)
+      const bearerToken = authHeader.replace(/^[Bb]earer\s+/, '')
+      // Fallback: check session cookie (for clients like Claude.ai that don't send Authorization header post-OAuth)
+      const cookieHeader = req.headers.get('Cookie') ?? ''
+      const cookieToken = cookieHeader.match(/locigram_token=([^;]+)/)?.[1] ?? ''
+      const token = bearerToken || cookieToken
+      console.log(`[mcp-auth] method=${req.method} bearer=${bearerToken.substring(0, 16) || '(none)'} cookie=${cookieToken.substring(0, 16) || '(none)'} expected=${apiToken.substring(0, 16)}`)
       if (token !== apiToken) {
         const publicUrl = process.env.LOCIGRAM_PUBLIC_URL || 'http://localhost:3000'
         return new Response(JSON.stringify({ error: 'Unauthorized' }), {

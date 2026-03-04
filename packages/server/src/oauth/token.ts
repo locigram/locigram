@@ -103,6 +103,10 @@ tokenRoute.post('/', async (c) => {
     throw new HTTPException(500, { message: 'Palace has no API token configured' })
   }
 
+  // Set a session cookie so clients that don't send Authorization header
+  // (e.g. Claude.ai) can still authenticate via cookie on subsequent requests
+  c.header('Set-Cookie', `locigram_token=${palace.apiToken}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=3600`)
+
   return c.json({
     access_token: palace.apiToken,
     token_type: 'bearer',
