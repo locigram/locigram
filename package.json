@@ -11,5 +11,8 @@
     "build": "bun run --filter '*' build",
     "test": "bun test",
     "migrate": "bun run --cwd packages/db migrate"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }

@@ -25,6 +25,7 @@
     "hono": "latest",
     "@hono/zod-validator": "latest",
     "@modelcontextprotocol/sdk": "latest",
-    "zod": "latest"
+    "zod": "latest",
+    "bcryptjs": "latest"
   }
 }

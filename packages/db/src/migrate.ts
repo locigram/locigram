@@ -141,6 +141,30 @@ await sql`
   )
 `
 
+await sql`
+  CREATE TABLE IF NOT EXISTS oauth_clients (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    secret_hash   TEXT NOT NULL,
+    redirect_uris TEXT[] NOT NULL DEFAULT '{}',
+    palace_id     TEXT NOT NULL REFERENCES palaces(id) ON DELETE CASCADE,
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    revoked_at    TIMESTAMPTZ
+  )
+`
+
+await sql`
+  CREATE TABLE IF NOT EXISTS oauth_codes (
+    code            TEXT PRIMARY KEY,
+    client_id       TEXT NOT NULL REFERENCES oauth_clients(id),
+    redirect_uri    TEXT NOT NULL,
+    palace_id       TEXT NOT NULL,
+    code_challenge  TEXT,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    used_at         TIMESTAMPTZ
+  )
+`
+
 // ── Indexes ───────────────────────────────────────────────────────────────────
 
 // locigrams — btree
@@ -187,6 +211,14 @@ await sql`CREATE INDEX sources_connector_idx   ON sources(palace_id, connector)`
 // retrieval_events
 await sql`CREATE INDEX retrieval_events_palace_idx  ON retrieval_events(palace_id, retrieved_at)`
 await sql`CREATE INDEX retrieval_events_ids_gin     ON retrieval_events USING GIN(locigram_ids)`
+
+// oauth_clients
+await sql`CREATE INDEX oauth_clients_palace_id_idx ON oauth_clients(palace_id)`
+await sql`CREATE INDEX oauth_clients_revoked_idx   ON oauth_clients(palace_id) WHERE revoked_at IS NULL`
+
+// oauth_codes
+await sql`CREATE INDEX oauth_codes_client_id_idx ON oauth_codes(client_id)`
+await sql`CREATE INDEX oauth_codes_expires_idx   ON oauth_codes(expires_at)`
 
 // ── Seed palace ───────────────────────────────────────────────────────────────
 

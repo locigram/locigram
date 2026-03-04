@@ -39,6 +39,9 @@ data:
   PALACE_NAME: "<Your Name>"
   PORT:        "3000"
 
+  # OAuth 2.0 — public URL used in /.well-known/oauth-authorization-server discovery
+  # LOCIGRAM_PUBLIC_URL: "https://mcp.example.com"   # default: http://localhost:3000
+
   # Qdrant (in-cluster)
   QDRANT_URL:  "http://locigram-qdrant:6333"
 

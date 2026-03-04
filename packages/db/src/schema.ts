@@ -198,6 +198,43 @@ export const syncCursors = pgTable(
   ],
 )
 
+// ── oauth_clients ────────────────────────────────────────────────────────────
+
+export const oauthClients = pgTable(
+  'oauth_clients',
+  {
+    id:           text('id').primaryKey(),
+    name:         text('name').notNull(),
+    secretHash:   text('secret_hash').notNull(),
+    redirectUris: text('redirect_uris').array().notNull().default(sql`'{}'`),
+    palaceId:     palaceId(),
+    createdAt:    tstz('created_at').defaultNow(),
+    revokedAt:    tstz('revoked_at'),
+  },
+  (t) => [
+    index('oauth_clients_palace_id_idx').on(t.palaceId),
+  ],
+)
+
+// ── oauth_codes ──────────────────────────────────────────────────────────────
+
+export const oauthCodes = pgTable(
+  'oauth_codes',
+  {
+    code:          text('code').primaryKey(),
+    clientId:      text('client_id').notNull().references(() => oauthClients.id),
+    redirectUri:   text('redirect_uri').notNull(),
+    palaceId:      text('palace_id').notNull(),
+    codeChallenge: text('code_challenge'),
+    expiresAt:     tstz('expires_at').notNull(),
+    usedAt:        tstz('used_at'),
+  },
+  (t) => [
+    index('oauth_codes_client_id_idx').on(t.clientId),
+    index('oauth_codes_expires_idx').on(t.expiresAt),
+  ],
+)
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type Palace    = typeof palaces.$inferSelect
@@ -207,6 +244,8 @@ export type Entity    = typeof entities.$inferSelect
 export type Source          = typeof sources.$inferSelect
 export type RetrievalEvent = typeof retrievalEvents.$inferSelect
 export type SyncCursor     = typeof syncCursors.$inferSelect
+export type OAuthClient    = typeof oauthClients.$inferSelect
+export type OAuthCode      = typeof oauthCodes.$inferSelect
 
 export type NewPalace          = typeof palaces.$inferInsert
 export type NewLocigram        = typeof locigrams.$inferInsert
@@ -215,6 +254,8 @@ export type NewEntity          = typeof entities.$inferInsert
 export type NewSource          = typeof sources.$inferInsert
 export type NewRetrievalEvent  = typeof retrievalEvents.$inferInsert
 export type NewSyncCursor      = typeof syncCursors.$inferInsert
+export type NewOAuthClient     = typeof oauthClients.$inferInsert
+export type NewOAuthCode       = typeof oauthCodes.$inferInsert
 
 // ── Reference type constants ──────────────────────────────────────────────────
 
