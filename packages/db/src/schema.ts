@@ -75,6 +75,12 @@ export const locigrams = pgTable(
     // Vector
     embeddingId: text('embedding_id'),            // Qdrant point ID; null = pending embed
 
+    // Access scoring (memory intelligence)
+    accessCount:      integer('access_count').notNull().default(0),
+    lastAccessedAt:   timestamp('last_accessed_at', { withTimezone: true }),
+    accessScore:      real('access_score').notNull().default(1.0),
+    clusterCandidate: boolean('cluster_candidate').notNull().default(false),
+
     palaceId:    palaceId(),
   },
   (t) => [
@@ -167,19 +173,31 @@ export const sources = pgTable(
   ],
 )
 
+// ── retrieval_events ─────────────────────────────────────────────────────
+
+export const retrievalEvents = pgTable('retrieval_events', {
+  id:          uuid('id').primaryKey().defaultRandom(),
+  palaceId:    text('palace_id').notNull().references(() => palaces.id, { onDelete: 'cascade' }),
+  queryText:   text('query_text'),
+  locigramIds: text('locigram_ids').array().notNull().default([]),
+  retrievedAt: timestamp('retrieved_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type Palace    = typeof palaces.$inferSelect
 export type Locigram  = typeof locigrams.$inferSelect
 export type Truth     = typeof truths.$inferSelect
 export type Entity    = typeof entities.$inferSelect
-export type Source    = typeof sources.$inferSelect
+export type Source          = typeof sources.$inferSelect
+export type RetrievalEvent = typeof retrievalEvents.$inferSelect
 
-export type NewPalace   = typeof palaces.$inferInsert
-export type NewLocigram = typeof locigrams.$inferInsert
-export type NewTruth    = typeof truths.$inferInsert
-export type NewEntity   = typeof entities.$inferInsert
-export type NewSource   = typeof sources.$inferInsert
+export type NewPalace          = typeof palaces.$inferInsert
+export type NewLocigram        = typeof locigrams.$inferInsert
+export type NewTruth           = typeof truths.$inferInsert
+export type NewEntity          = typeof entities.$inferInsert
+export type NewSource          = typeof sources.$inferInsert
+export type NewRetrievalEvent  = typeof retrievalEvents.$inferInsert
 
 // ── Reference type constants ──────────────────────────────────────────────────
 

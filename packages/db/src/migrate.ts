@@ -11,6 +11,7 @@ console.log('[migrate] running migrations...')
 const sql = postgres(url, { max: 1 })
 
 // Drop & recreate (early-stage, no prod data yet)
+await sql`DROP TABLE IF EXISTS retrieval_events CASCADE`
 await sql`DROP TABLE IF EXISTS sources   CASCADE`
 await sql`DROP TABLE IF EXISTS entities  CASCADE`
 await sql`DROP TABLE IF EXISTS truths    CASCADE`
@@ -69,6 +70,12 @@ await sql`
     -- Vector
     embedding_id   TEXT,                   -- Qdrant point ID (null = not yet embedded)
 
+    -- Access scoring (memory intelligence)
+    access_count      INT         NOT NULL DEFAULT 0,
+    last_accessed_at  TIMESTAMPTZ,
+    access_score      FLOAT       NOT NULL DEFAULT 1.0,
+    cluster_candidate BOOLEAN     NOT NULL DEFAULT FALSE,
+
     palace_id      TEXT        NOT NULL REFERENCES palaces(id) ON DELETE CASCADE
   )
 `
@@ -114,6 +121,16 @@ await sql`
   )
 `
 
+await sql`
+  CREATE TABLE retrieval_events (
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    palace_id     TEXT        NOT NULL REFERENCES palaces(id) ON DELETE CASCADE,
+    query_text    TEXT,
+    locigram_ids  TEXT[]      NOT NULL DEFAULT '{}',
+    retrieved_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`
+
 // ── Indexes ───────────────────────────────────────────────────────────────────
 
 // locigrams — btree
@@ -130,6 +147,11 @@ await sql`CREATE INDEX locigrams_occurred_at_idx           ON locigrams(palace_i
 await sql`CREATE INDEX locigrams_created_at_idx            ON locigrams(palace_id, created_at)`
 await sql`CREATE INDEX locigrams_expires_at_idx            ON locigrams(expires_at) WHERE expires_at IS NOT NULL`
 await sql`CREATE INDEX locigrams_embedding_pending_idx     ON locigrams(palace_id) WHERE embedding_id IS NULL AND tier IN ('hot','warm')`
+
+// locigrams — access scoring
+await sql`CREATE INDEX locigrams_access_score_idx      ON locigrams(palace_id, access_score)`
+await sql`CREATE INDEX locigrams_last_accessed_idx     ON locigrams(palace_id, last_accessed_at) WHERE last_accessed_at IS NOT NULL`
+await sql`CREATE INDEX locigrams_cluster_candidate_idx ON locigrams(palace_id, cluster_candidate) WHERE cluster_candidate = TRUE`
 
 // locigrams — GIN
 await sql`CREATE INDEX locigrams_entities_gin  ON locigrams USING GIN(entities)`
@@ -151,6 +173,10 @@ await sql`CREATE INDEX entities_aliases_gin    ON entities USING GIN(aliases)`
 await sql`CREATE INDEX sources_locigram_id_idx ON sources(locigram_id)`
 await sql`CREATE INDEX sources_palace_id_idx   ON sources(palace_id)`
 await sql`CREATE INDEX sources_connector_idx   ON sources(palace_id, connector)`
+
+// retrieval_events
+await sql`CREATE INDEX retrieval_events_palace_idx  ON retrieval_events(palace_id, retrieved_at)`
+await sql`CREATE INDEX retrieval_events_ids_gin     ON retrieval_events USING GIN(locigram_ids)`
 
 // ── Seed palace ───────────────────────────────────────────────────────────────
 
