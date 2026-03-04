@@ -73,7 +73,16 @@ export async function extractFromRaw(
       return fallback(raw)
     }
 
-    const data = await res.json() as { choices: Array<{ message: { content: string } }> }
+    const bodyText = await res.text()
+    let data: { choices?: Array<{ message?: { content?: string } }> } = {}
+
+    try {
+      data = JSON.parse(bodyText)
+    } catch (e) {
+      console.warn('[pipeline] LLM returned non-JSON:', bodyText.slice(0, 300))
+      return fallback(raw)
+    }
+
     const content = data?.choices?.[0]?.message?.content
     if (!content) return fallback(raw)
 
@@ -91,7 +100,7 @@ export async function extractFromRaw(
       return parsed.data
     } catch (e) {
       console.warn('[pipeline] JSON parse failed for content:', content)
-      throw e
+      return fallback(raw)
     }
   } catch (err) {
     console.warn('[pipeline] extraction failed:', err)
