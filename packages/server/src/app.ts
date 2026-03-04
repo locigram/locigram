@@ -136,13 +136,25 @@ export function createApp(config: AppConfig) {
 
     const snapshotRef = `openclaw:session:${sessionId}:snap:${Date.now()}`
 
+    // Session transcripts use preClassified to skip LLM extraction:
+    // 1. Forces locus = agent/{agentName} — LLM would otherwise classify as personal/general
+    // 2. Stores the full transcript as one retrievable unit (extraction on Q&A format produces noise)
+    const agentLocus = `agent/${agentName}`
     const raw: import('@locigram/core').RawMemory = {
       content:    transcript,
       sourceType: 'llm-session',
       sourceRef:  snapshotRef,
       occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
-      locus:      `agent/${agentName}`,
+      locus:      agentLocus,
       metadata:   { agent_name: agentName, session_id: sessionId, connector: 'locigram-session-monitor' },
+      preClassified: {
+        locus:         agentLocus,
+        entities:      [agentName],
+        isReference:   false,
+        referenceType: null,
+        importance:    'normal',
+        clientId:      null,
+      },
     }
 
     const { ingest } = await import('@locigram/pipeline')
