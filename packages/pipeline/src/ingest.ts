@@ -48,15 +48,21 @@ export async function ingest(
         }
 
         const [stored] = await db.insert(locigrams).values({
-          content:    loc.content,
-          sourceType: raw.sourceType,
-          sourceRef:  raw.sourceRef,
+          content:       loc.content,
+          sourceType:    raw.sourceType,
+          sourceRef:     raw.sourceRef,
           connector,
-          locus:      extraction.locus,
-          entities:   resolvedEntities,
-          confidence: loc.confidence,
-          metadata:   raw.metadata ?? {},
-          palaceId:   config.palaceId,
+          occurredAt:    raw.occurredAt ?? null,
+          locus:         extraction.locus,
+          clientId:      (raw.metadata?.client_id as string | undefined) ?? null,
+          importance:    (raw.metadata?.importance as string | undefined) ?? 'normal',
+          tier:          'hot',
+          isReference:   extraction.isReference ?? false,
+          referenceType: extraction.referenceType ?? null,
+          entities:      resolvedEntities,
+          confidence:    loc.confidence,
+          metadata:      raw.metadata ?? {},
+          palaceId:      config.palaceId,
         }).returning()
 
         // 6. Store provenance in sources table

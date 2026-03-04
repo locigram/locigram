@@ -24,13 +24,14 @@ export async function detectReinforcement(
 ): Promise<ReinforcementGroup[]> {
   const since = new Date(Date.now() - SIMILARITY_WINDOW_DAYS * 24 * 60 * 60 * 1000)
 
-  // Get locigrams from the window that aren't already in a truth
+  // Get knowledge locigrams from the window (skip reference data — it never gets promoted)
   const recent = await db
     .select()
     .from(locigrams)
     .where(
       and(
         eq(locigrams.palaceId, palaceId),
+        eq(locigrams.isReference, false),
         gte(locigrams.createdAt, since),
       )
     )
