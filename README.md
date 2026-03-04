@@ -30,50 +30,106 @@ API_TOKEN=a-long-random-secret
 POSTGRES_PASSWORD=another-random-secret
 ```
 
-**3. Set your LLM** — Locigram needs two model types:
+**3. Set your LLM** — Locigram uses three named roles, each independently configurable:
 
-| Role | What it does | Env vars |
-|------|-------------|----------|
-| Embed | Converts text to vectors for semantic search | `LOCIGRAM_EMBED_URL`, `LOCIGRAM_EMBED_MODEL`, `LOCIGRAM_EMBED_KEY` |
-| Extract | Parses entities, locus, and memory units from raw content | `LOCIGRAM_EXTRACT_URL`, `LOCIGRAM_EXTRACT_MODEL`, `LOCIGRAM_EXTRACT_KEY` |
-| Summary | Promotes truths and summarizes (falls back to extract if not set) | `LOCIGRAM_SUMMARY_URL`, `LOCIGRAM_SUMMARY_MODEL`, `LOCIGRAM_SUMMARY_KEY` |
+| Role | What it does | Requirement |
+|------|-------------|-------------|
+| **Embed** | Converts text to vectors for semantic search | `POST /v1/embeddings` |
+| **Extract** | Parses entities, locus, and memory units from raw content | `POST /v1/chat/completions` + reliable JSON output |
+| **Summary** | Promotes truths, summarizes across sources | `POST /v1/chat/completions` — falls back to Extract if not set |
 
 Each role points at any **OpenAI-compatible endpoint**. Leave `*_KEY` blank for local/unauthenticated.
 
-**Option A — Ollama (local, free):**
+---
+
+### 🟢 Ollama (local, free — recommended for getting started)
+
 ```bash
-ollama pull nomic-embed-text   # for embed
-ollama pull qwen2.5:7b         # for extract
+ollama pull nomic-embed-text   # embed
+ollama pull qwen2.5:7b         # extract + summary
 ```
 ```env
+# Embed
 LOCIGRAM_EMBED_URL=http://localhost:11434/v1
 LOCIGRAM_EMBED_MODEL=nomic-embed-text
 
+# Extract
 LOCIGRAM_EXTRACT_URL=http://localhost:11434/v1
 LOCIGRAM_EXTRACT_MODEL=qwen2.5:7b
+
+# Summary — use a larger model if you have the VRAM, otherwise leave blank to reuse extract
+# LOCIGRAM_SUMMARY_URL=http://localhost:11434/v1
+# LOCIGRAM_SUMMARY_MODEL=qwen2.5:14b
 ```
 
-**Option B — OpenAI:**
+> **Recommended Ollama models by role:**
+> - Embed: `nomic-embed-text` (best all-around), `mxbai-embed-large` (higher quality)
+> - Extract: `qwen2.5:7b` (best JSON adherence at small size), `llama3.1:8b` (good alternative)
+> - Summary: `qwen2.5:14b` or `llama3.1:70b` if you have the VRAM; otherwise reuse extract
+
+---
+
+### 🔵 OpenAI
+
 ```env
+# Embed
 LOCIGRAM_EMBED_URL=https://api.openai.com/v1
 LOCIGRAM_EMBED_MODEL=text-embedding-3-small
 LOCIGRAM_EMBED_KEY=sk-...
 
+# Extract — gpt-4o-mini is the sweet spot: cheap, fast, excellent JSON
 LOCIGRAM_EXTRACT_URL=https://api.openai.com/v1
 LOCIGRAM_EXTRACT_MODEL=gpt-4o-mini
 LOCIGRAM_EXTRACT_KEY=sk-...
 
-# Optional: use a larger model for truth summarization
+# Summary — step up to gpt-4o for better truth synthesis (optional)
 LOCIGRAM_SUMMARY_URL=https://api.openai.com/v1
 LOCIGRAM_SUMMARY_MODEL=gpt-4o
 LOCIGRAM_SUMMARY_KEY=sk-...
 ```
 
-**Option C — Any OpenAI-compatible API** (Together, Groq, vLLM, LM Studio, etc.):
+> **Recommended OpenAI models by role:**
+> - Embed: `text-embedding-3-small` (cheap, great), `text-embedding-3-large` (best quality)
+> - Extract: `gpt-4o-mini` — best cost/performance for structured JSON extraction
+> - Summary: `gpt-4o` for production; `gpt-4o-mini` if you want to save cost
+
+---
+
+### 🟣 Groq (fast inference, free tier available)
+
 ```env
+# Embed — Groq doesn't offer embeddings; use OpenAI or Ollama for this role
+LOCIGRAM_EMBED_URL=https://api.openai.com/v1
+LOCIGRAM_EMBED_MODEL=text-embedding-3-small
+LOCIGRAM_EMBED_KEY=sk-...
+
+# Extract + Summary — Groq is excellent for fast chat completions
 LOCIGRAM_EXTRACT_URL=https://api.groq.com/openai/v1
-LOCIGRAM_EXTRACT_MODEL=llama-3.1-70b-versatile
+LOCIGRAM_EXTRACT_MODEL=llama-3.1-8b-instant
 LOCIGRAM_EXTRACT_KEY=gsk_...
+
+LOCIGRAM_SUMMARY_URL=https://api.groq.com/openai/v1
+LOCIGRAM_SUMMARY_MODEL=llama-3.3-70b-versatile
+LOCIGRAM_SUMMARY_KEY=gsk_...
+```
+
+> **Note:** Groq doesn't provide an embeddings endpoint — mix with OpenAI or Ollama for the embed role.
+
+---
+
+### ⚙️ Any OpenAI-compatible API (Together, vLLM, LM Studio, etc.)
+
+```env
+LOCIGRAM_EMBED_URL=http://your-server:8000/v1
+LOCIGRAM_EMBED_MODEL=your-embedding-model
+
+LOCIGRAM_EXTRACT_URL=http://your-server:8000/v1
+LOCIGRAM_EXTRACT_MODEL=your-chat-model
+LOCIGRAM_EXTRACT_KEY=your-api-key-if-needed
+
+# Summary can be a different server/model entirely
+LOCIGRAM_SUMMARY_URL=http://your-bigger-server:8001/v1
+LOCIGRAM_SUMMARY_MODEL=your-larger-model
 ```
 
 **4. Start**
