@@ -387,25 +387,131 @@ MCP endpoint: `http://<your-locigram-host>/mcp` (see MCP section below).
 
 ## MCP Integration
 
-Locigram exposes an **MCP (Model Context Protocol) server** at `/mcp`. This is the primary integration point for OpenClaw and any other AI assistant.
+Locigram exposes an **MCP (Model Context Protocol) server** at `/mcp`. This is the primary integration point for OpenClaw and any AI assistant that supports MCP.
 
 **Endpoint:** `http://<your-locigram-host>/mcp`
 **Auth:** `Authorization: Bearer <API_TOKEN>`
 **Transport:** Streamable HTTP (MCP spec 2025-03-26)
 
-Configure in OpenClaw:
-```json
+---
+
+### Wiring to OpenClaw via mcporter
+
+OpenClaw uses [mcporter](https://mcporter.dev) as its MCP client runtime. Follow these steps to connect Locigram to any OpenClaw agent.
+
+#### Step 1 — Install mcporter
+
+```bash
+npm install -g mcporter
+# verify
+mcporter --version
+```
+
+#### Step 2 — Register the Locigram server
+
+mcporter stores server configs in `~/.mcporter/mcporter.json` (system-wide) or `<workspace>/config/mcporter.json` (per-agent).
+
+**System-wide (recommended — works for all agents regardless of working directory):**
+
+```bash
+# Create system config directory
+mkdir -p ~/.mcporter
+
+# Write the config
+cat > ~/.mcporter/mcporter.json << 'EOF'
 {
-  "mcp": {
-    "servers": {
-      "locigram": {
-        "url": "http://<your-locigram-host>/mcp",
-        "token": "<your-api-token>"
+  "mcpServers": {
+    "locigram": {
+      "baseUrl": "http://<your-locigram-host>/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-api-token>"
       }
     }
-  }
+  },
+  "imports": []
+}
+EOF
+```
+
+**Or add via CLI (writes to per-project config):**
+```bash
+mcporter config add locigram http://<your-locigram-host>/mcp \
+  --header "Authorization=Bearer <your-api-token>"
+```
+
+#### Step 3 — Verify the connection
+
+```bash
+# List tools — should show all 12
+mcporter list locigram
+
+# Test a live call
+mcporter call locigram.palace_stats
+mcporter call locigram.memory_session_start --args '{"locus":"agent/main","lookbackDays":7}'
+```
+
+Expected output from `memory_session_start`:
+```json
+{
+  "recentMemories": [...],
+  "truths": [...],
+  "summary": "Found N recent memories and M truths from the last 7 days."
 }
 ```
+
+#### Step 4 — Add recovery call to each agent's SOUL.md
+
+Add this block to the `SOUL.md` of every persistent OpenClaw agent (substitute the correct locus per agent):
+
+```markdown
+## 🧠 Locigram Memory Recovery (Post-Compaction)
+
+After any context compaction, run this via exec to recover your active state:
+
+\`\`\`bash
+mcporter call locigram.memory_session_start --args '{"locus":"agent/<name>","lookbackDays":7}'
+\`\`\`
+
+Returns: recent decisions, active context, high-importance items from the last 7 days.
+Compare against current task — anything in-flight not being addressed is a gap.
+
+**Fallback (if Locigram MCP unavailable):** Fall back to project pages + live-handoff.md.
+```
+
+**Agent loci to use:**
+
+| Agent type | Locus |
+|---|---|
+| Main / default session | `agent/main` |
+| Monitoring agent | `agent/watcher` |
+| Business operations agent | `agent/msp` |
+| Infrastructure / DevOps agent | `agent/devops` |
+| Custom agent | `agent/<your-name>` |
+
+#### Step 5 — Verify tools are callable from the agent
+
+From within an OpenClaw session, the agent can call any Locigram tool via exec:
+
+```bash
+# Recall memories about a topic
+mcporter call locigram.memory_recall --args '{"query":"project decisions last week","limit":5}'
+
+# Look up everything about a client/account
+mcporter call locigram.memory_client --args '{"clientId":"acme-corp"}'
+
+# Store a new memory
+mcporter call locigram.memory_remember --args '{"content":"Decided to use Streamable HTTP for MCP transport","locus":"project/locigram"}'
+
+# Correct a wrong memory
+mcporter call locigram.memory_correct --args '{"oldId":"<uuid>","correction":"The correct information"}'
+```
+
+#### Notes
+
+- The mcporter system config (`~/.mcporter/mcporter.json`) is loaded automatically — no `--config` flag needed
+- Per-workspace config (`<workspace>/config/mcporter.json`) takes precedence over system config when both exist
+- The Locigram API token is the `API_TOKEN` value from your `palace-*.yaml` (or `LOCIGRAM_API_TOKEN` env var)
+- MCP session TTL is 30 minutes — mcporter handles reconnection transparently
 
 ### MCP Tools (12 total)
 
