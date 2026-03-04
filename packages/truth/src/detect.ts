@@ -61,3 +61,41 @@ export async function detectReinforcement(
   // Only return groups that meet the reinforcement threshold
   return [...groups.values()].filter(g => g.count >= REINFORCEMENT_THRESHOLD)
 }
+
+/**
+ * Find groups of cluster_candidate locigrams (flagged by co-occurrence analysis).
+ * Groups by locus + entity overlap, same as detectReinforcement.
+ */
+export async function detectClusterGroups(
+  db: DB,
+  palaceId: string,
+): Promise<ReinforcementGroup[]> {
+  // Find all cluster candidates
+  const candidates = await db
+    .select()
+    .from(locigrams)
+    .where(
+      and(
+        eq(locigrams.palaceId, palaceId),
+        eq(locigrams.clusterCandidate, true),
+        eq(locigrams.isReference, false),
+      )
+    )
+
+  if (candidates.length === 0) return []
+
+  // Group by locus + entity overlap (same as existing detect logic)
+  const groups = new Map<string, ReinforcementGroup>()
+  for (const loc of candidates) {
+    const key = `${loc.locus}::${[...loc.entities].sort().join(',')}`
+    if (groups.has(key)) {
+      const g = groups.get(key)!
+      g.locigramIds.push(loc.id)
+      g.count++
+    } else {
+      groups.set(key, { locus: loc.locus, entities: loc.entities, locigramIds: [loc.id], count: 1 })
+    }
+  }
+
+  return [...groups.values()].filter(g => g.count >= 2)
+}

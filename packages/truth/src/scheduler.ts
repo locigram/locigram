@@ -1,5 +1,5 @@
 import type { DB } from '@locigram/db'
-import { detectReinforcement } from './detect'
+import { detectReinforcement, detectClusterGroups } from './detect'
 import { promoteToTruth } from './promote'
 import { decayTruths } from './decay'
 import { locigrams } from '@locigram/db'
@@ -37,7 +37,16 @@ export function startTruthEngine(db: DB, config: TruthEngineConfig): () => void 
         }
       }
 
-      // 3. Decay stale truths
+      // 3. Cluster promotion (cluster worker flags candidates weekly, promote runs more often)
+      const clusterGroups = await detectClusterGroups(db, config.palaceId)
+      for (const group of clusterGroups) {
+        const statement = group.locigramIds.length > 0
+          ? `[Cluster] ${group.entities.join(', ')} — ${group.locigramIds.length} related observations`
+          : 'Related observations merged'
+        await promoteToTruth(db, config.palaceId, group, statement)
+      }
+
+      // 4. Decay stale truths
       await decayTruths(db, config.palaceId)
 
       console.log('[truth-engine] done')

@@ -1,5 +1,5 @@
 import { truths, locigrams } from '@locigram/db'
-import { eq, and, sql } from 'drizzle-orm'
+import { eq, and, sql, inArray } from 'drizzle-orm'
 import type { DB } from '@locigram/db'
 import type { ReinforcementGroup } from './detect'
 
@@ -51,4 +51,9 @@ export async function promoteToTruth(
       palaceId,
     })
   }
+
+  // Clear cluster_candidate flag on promoted source locigrams
+  await db.update(locigrams)
+    .set({ clusterCandidate: false })
+    .where(and(eq(locigrams.palaceId, palaceId), inArray(locigrams.id, group.locigramIds)))
 }
