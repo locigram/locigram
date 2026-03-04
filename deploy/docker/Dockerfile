@@ -20,7 +20,8 @@ COPY packages/connectors/gmail/package.json         ./packages/connectors/gmail/
 COPY packages/connectors/qbo/package.json           ./packages/connectors/qbo/
 COPY packages/connectors/surudb/package.json        ./packages/connectors/surudb/
 COPY packages/connectors/email/package.json         ./packages/connectors/email/
-COPY packages/connectors/sms/package.json           ./packages/connectors/sms/
+COPY packages/connectors/sms/package.json              ./packages/connectors/sms/
+COPY packages/connectors/session-monitor/package.json  ./packages/connectors/session-monitor/
 
 
 # Install deps (workspace-aware)

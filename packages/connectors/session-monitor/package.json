@@ -1,0 +1,11 @@
+{
+  "name": "@locigram/session-monitor",
+  "version": "0.1.0",
+  "private": false,
+  "description": "OpenClaw session monitor for Locigram — watches OpenClaw session files and pushes summaries to your Locigram palace",
+  "main": "src/index.ts",
+  "bin": {
+    "locigram-session-monitor": "src/cli.ts"
+  },
+  "dependencies": {}
+}

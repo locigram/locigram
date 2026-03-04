@@ -122,6 +122,34 @@ export function createApp(config: AppConfig) {
   app.route('/api/webhook',   buildWebhookRoute())
   app.route('/api/bootstrap', bootstrapRoute)
 
+  // ── Session monitor ingest endpoint ────────────────────────────────────────
+  app.post('/api/sessions/ingest', async (c) => {
+    const body = await c.req.json()
+    const { agentName, sessionId, transcript, occurredAt } = body
+
+    if (!agentName || !sessionId || !transcript) {
+      return c.json({ error: 'agentName, sessionId, and transcript are required' }, 400)
+    }
+
+    const db     = c.get('db')
+    const palace = c.get('palace')
+
+    const snapshotRef = `openclaw:session:${sessionId}:snap:${Date.now()}`
+
+    const raw: import('@locigram/core').RawMemory = {
+      content:    transcript,
+      sourceType: 'llm-session',
+      sourceRef:  snapshotRef,
+      occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
+      metadata:   { agent_name: agentName, session_id: sessionId, connector: 'locigram-session-monitor', palace_id: palace.id },
+    }
+
+    const { ingest } = await import('@locigram/pipeline')
+    const result = await ingest([raw], db, pipelineConfig)
+
+    return c.json(result)
+  })
+
   // ── MCP endpoint (exempt from auth middleware — bearer check inline) ──────
   let mcpHandler: ((req: Request) => Promise<Response>) | null = null
 
