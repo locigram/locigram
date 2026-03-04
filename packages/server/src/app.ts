@@ -69,7 +69,7 @@ export function createApp(config: AppConfig) {
 
   // Auto-register connectors from env vars — no config file needed
   const registry = autoRegisterConnectors()
-  console.log(`[app] registered connectors: ${registry.list().map(c => c.name).join(', ') || 'none (webhook always active)'}`)
+  console.log(`[app] registered connectors: ${registry.list().join(', ') || 'none (webhook always active)'}`)
 
   // Start background embed worker (every 30s)
   const stopWorker = startEmbedWorker(db, vectorClient, config.palaceId, 30_000)

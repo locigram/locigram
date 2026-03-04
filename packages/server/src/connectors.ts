@@ -2,11 +2,10 @@
  * Auto-register connectors based on env vars.
  * No config file needed — connectors light up when credentials are present.
  */
-import { createRegistry } from '@locigram/registry'
+import { registry } from '@locigram/registry'
 import { webhookConnector } from '@locigram/connector-webhook'
 
 export function autoRegisterConnectors() {
-  const registry = createRegistry()
 
   // Webhook is always on — zero config needed
   registry.register(webhookConnector)
