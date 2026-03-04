@@ -4,8 +4,7 @@
   "private": true,
   "workspaces": [
     "packages/*",
-    "packages/connectors/*",
-    "packages/connectors/qbo"
+    "packages/connectors/*"
   ],
   "scripts": {
     "dev": "bun run --filter '*' dev",
