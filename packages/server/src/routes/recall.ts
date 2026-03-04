@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { locigrams } from '@locigram/db'
-import { eq, and, inArray } from 'drizzle-orm'
+import { locigrams, retrievalEvents } from '@locigram/db'
+import { eq, and, inArray, sql } from 'drizzle-orm'
 
 const schema = z.object({
   query:      z.string().min(1),
@@ -50,6 +50,25 @@ recallRoute.post('/', zValidator('json', schema), async (c) => {
   const results  = rows
     .sort((a, b) => (scoreMap.get(b.id) ?? 0) - (scoreMap.get(a.id) ?? 0))
     .map(r => ({ ...r, _score: scoreMap.get(r.id) ?? 0 }))
+
+  // Fire-and-forget — don't block the response
+  if (ids.length > 0) {
+    db.update(locigrams)
+      .set({
+        accessCount:     sql`access_count + 1`,
+        lastAccessedAt:  new Date(),
+      })
+      .where(and(eq(locigrams.palaceId, palace.id), inArray(locigrams.id, ids)))
+      .catch(err => console.warn('[recall] access_count update failed:', err))
+
+    db.insert(retrievalEvents)
+      .values({
+        palaceId:    palace.id,
+        queryText:   query,
+        locigramIds: ids,
+      })
+      .catch(err => console.warn('[recall] retrieval_events insert failed:', err))
+  }
 
   return c.json({ results, query, total: results.length })
 })
