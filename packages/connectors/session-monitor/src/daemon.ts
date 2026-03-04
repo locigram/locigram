@@ -11,36 +11,32 @@ interface AgentState {
   sessionId: string
 }
 
+// Mirrors the logic from the existing OpenClaw session-monitor:
+// score = size if modified within 2h, else 0. Pick highest score; break ties by mtime.
 function findNewestJsonl(sessionsDir: string): string | null {
   if (!fs.existsSync(sessionsDir)) return null
-  const MIN_SIZE = 1000  // ignore tiny stub files
+  const TWO_HOURS = 2 * 60 * 60 * 1000
 
-  const allFiles = fs.readdirSync(sessionsDir)
-  const lockFiles = new Set(allFiles.filter(f => f.endsWith('.jsonl.lock')).map(f => f.replace('.lock', '')))
+  let bestPath: string | null = null
+  let bestSize = -1
+  let bestMtime = -1
 
-  const files = allFiles
-    .filter(f => f.endsWith('.jsonl'))
-    .map(f => {
-      const stat = fs.statSync(path.join(sessionsDir, f))
-      return { name: f, mtime: stat.mtimeMs, size: stat.size, hasLock: lockFiles.has(f) }
-    })
-    .filter(f => f.size >= MIN_SIZE)
-
-  // First priority: files with an active .lock — sort by lock file mtime (most recently touched lock = active session)
-  const locked = files.filter(f => f.hasLock)
-  if (locked.length > 0) {
-    locked.sort((a, b) => {
-      const lockMtimeA = fs.statSync(path.join(sessionsDir, a.name + '.lock')).mtimeMs
-      const lockMtimeB = fs.statSync(path.join(sessionsDir, b.name + '.lock')).mtimeMs
-      return lockMtimeB - lockMtimeA  // newest lock wins
-    })
-    return path.join(sessionsDir, locked[0].name)
+  for (const f of fs.readdirSync(sessionsDir)) {
+    if (!f.endsWith('.jsonl')) continue
+    try {
+      const full = path.join(sessionsDir, f)
+      const stat = fs.statSync(full)
+      const recentlyActive = (Date.now() - stat.mtimeMs) < TWO_HOURS
+      const score = recentlyActive ? stat.size : 0
+      if (score > bestSize || (score === bestSize && stat.mtimeMs > bestMtime)) {
+        bestSize = score
+        bestMtime = stat.mtimeMs
+        bestPath = full
+      }
+    } catch { /* skip */ }
   }
 
-  // Fall back: most recently modified non-stub file
-  if (files.length === 0) return null
-  files.sort((a, b) => b.mtime - a.mtime)
-  return path.join(sessionsDir, files[0].name)
+  return bestPath
 }
 
 function extractSessionId(filePath: string): string {
