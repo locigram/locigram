@@ -30,7 +30,8 @@ export const config = {
   obsidianVault:    process.env.OBSIDIAN_VAULT ?? null as string | null,
 
   // Optional — Discord
-  discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL ?? null as string | null,
+  discordToken:     process.env.DISCORD_BOT_TOKEN ?? null as string | null,
+  discordChannel:   process.env.SESSION_MONITOR_DISCORD_CHANNEL ?? null as string | null,
 }
 
 export function validateConfig(): void {
