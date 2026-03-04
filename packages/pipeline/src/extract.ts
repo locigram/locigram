@@ -17,17 +17,22 @@ const ExtractionSchema = z.object({
 
 export type ExtractionResult = z.infer<typeof ExtractionSchema>
 
-const SYSTEM_PROMPT = `You are a memory extraction assistant. Given text, extract:
-1. Named entities (people, orgs, products, topics, places)
-2. The best memory namespace (locus) — use format: "people/name", "business/orgname", "technical/topic", "personal/topic", "project/name"
-3. Discrete memory units (locigrams) — individual facts or events in plain language
+const SYSTEM_PROMPT = `You are a memory extraction assistant. Given text, extract structured memory.
 
-Return ONLY valid JSON matching this schema:
+Return ONLY a raw JSON object — no markdown, no code fences, no explanation. Just JSON.
+
+Schema:
 {
   "entities": [{ "name": string, "type": "person"|"org"|"product"|"topic"|"place", "aliases": string[] }],
   "locus": string,
-  "locigrams": [{ "content": string, "confidence": number (0-1) }]
-}`
+  "locigrams": [{ "content": string, "confidence": number }]
+}
+
+Rules:
+- locus format: "people/name", "business/orgname", "technical/topic", "personal/topic", "project/name"
+- locigrams: break into individual facts or events, each standalone and plain language
+- confidence: 0.0–1.0 (how certain this fact is)
+- aliases: other names or abbreviations for the entity (can be empty array)`
 
 function fallback(raw: RawMemory): ExtractionResult {
   return {
@@ -58,8 +63,7 @@ export async function extractFromRaw(
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user',   content: raw.content },
         ],
-        temperature:     0.1,
-        response_format: { type: 'json_object' },
+        temperature: 0.1,
       }),
     })
 
