@@ -70,23 +70,28 @@ fleetRoute.get('/', async (c) => {
   const db = c.get('db')
   const palace = c.get('palace')
 
-  // Query: latest locigram per unique agent locus matching agent/*/context
-  // Uses DISTINCT ON to get only the most recent row per agent
-  const rows = await db.execute(sql`
-    SELECT DISTINCT ON (
-      split_part(locus, '/', 2)
+  // Fetch all context locigrams matching agent/*/context, then deduplicate in JS
+  const allRows = await db
+    .select()
+    .from(locigrams)
+    .where(
+      sql`${locigrams.palaceId} = ${palace.id}
+        AND ${locigrams.locus} LIKE 'agent/%/context'
+        AND ${locigrams.expiresAt} IS NULL`
     )
-      id, content, locus, metadata, created_at, source_type
-    FROM locigrams
-    WHERE palace_id = ${palace.id}
-      AND locus LIKE 'agent/%/context'
-      AND expires_at IS NULL
-    ORDER BY split_part(locus, '/', 2), created_at DESC
-  `)
+    .orderBy(sql`${locigrams.createdAt} DESC`)
 
-  const agents = (rows.rows ?? rows).map((row: any) => {
-    const locus = row.locus as string
-    const agentName = locus.split('/')[1] ?? 'unknown'
+  // Deduplicate: keep only the latest row per agent name
+  const seen = new Set<string>()
+  const deduped = allRows.filter(row => {
+    const agentName = row.locus.split('/')[1] ?? 'unknown'
+    if (seen.has(agentName)) return false
+    seen.add(agentName)
+    return true
+  })
+
+  const agents = deduped.map((row) => {
+    const agentName = row.locus.split('/')[1] ?? 'unknown'
 
     // Try to parse structured context from content
     let structured: Record<string, unknown> = {}
@@ -102,8 +107,8 @@ fleetRoute.get('/', async (c) => {
       currentProject: structured.currentProject ?? null,
       blockers: structured.blockers ?? [],
       domain: structured.domain ?? null,
-      lastSeen: row.created_at,
-      agentType: (structured as any)._agentType ?? (row.metadata as any)?.agentType ?? 'permanent',
+      lastSeen: row.createdAt,
+      agentType: (row.metadata as any)?.agentType ?? 'permanent',
     }
   })
 
