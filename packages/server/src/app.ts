@@ -23,6 +23,7 @@ import { metadataRoute, protectedResourceRoute } from './oauth/metadata'
 import { clientsRoute } from './oauth/clients'
 import { authorizeRoute } from './oauth/authorize'
 import { tokenRoute } from './oauth/token'
+import { activeContextRoute, fleetRoute, heartbeatRoute } from './routes/context'
 
 export interface AppConfig {
   databaseUrl: string
@@ -134,6 +135,9 @@ export function createApp(config: AppConfig) {
   app.route('/api/feedback',  feedbackRoute)
   app.route('/api/webhook',   buildWebhookRoute())
   app.route('/api/bootstrap', bootstrapRoute)
+  app.route('/api/context/active', activeContextRoute)
+  app.route('/api/context/fleet',  fleetRoute)
+  app.route('/api/agents',         heartbeatRoute)
 
   // ── Internal summarize endpoint (used by session-monitor daemon) ───────────
   app.post('/api/internal/summarize', async (c) => {
@@ -199,7 +203,7 @@ export function createApp(config: AppConfig) {
   // ── Session monitor ingest endpoint ────────────────────────────────────────
   app.post('/api/sessions/ingest', async (c) => {
     const body = await c.req.json()
-    const { agentName, sessionId, transcript, occurredAt } = body
+    const { agentName, sessionId, transcript, occurredAt, locus: requestedLocus } = body
 
     if (!agentName || !sessionId || !transcript) {
       return c.json({ error: 'agentName, sessionId, and transcript are required' }, 400)
@@ -210,10 +214,9 @@ export function createApp(config: AppConfig) {
 
     const snapshotRef = `openclaw:session:${sessionId}:snap:${Date.now()}`
 
-    // Session transcripts use preClassified to skip LLM extraction:
-    // 1. Forces locus = agent/{agentName} — LLM would otherwise classify as personal/general
-    // 2. Stores the full transcript as one retrievable unit (extraction on Q&A format produces noise)
-    const agentLocus = `agent/${agentName}`
+    // Support hierarchical loci: caller can specify a locus like agent/{name}/session/{id}
+    // or agent/{name}/context. Legacy callers that don't send locus get agent/{name} (backwards compat).
+    const agentLocus = requestedLocus ?? `agent/${agentName}`
     const raw: import('@locigram/core').RawMemory = {
       content:    transcript,
       sourceType: 'llm-session',

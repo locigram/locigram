@@ -438,12 +438,30 @@ async function triggerHandoffDump(triggerSizeMb: number, triggerReason = 'file-s
     }
   }
 
-  // Always push summary to Locigram
+  // Push session summary to Locigram under hierarchical locus
   try {
-    await pushToLocigram(config.agentName, currentSessionId, summary, now)
-    log('handoff pushed to Locigram')
+    const sessionLocus = `agent/${config.agentName}/session/${currentSessionId}`
+    await pushToLocigram(config.agentName, currentSessionId, summary, now, sessionLocus)
+    log('handoff pushed to Locigram (session)')
   } catch (e: any) {
-    warn(`Locigram push error: ${e.message}`)
+    warn(`Locigram push error (session): ${e.message}`)
+  }
+
+  // Push active context (structured JSON) under context locus
+  if (structured) {
+    try {
+      const contextLocus = `agent/${config.agentName}/context`
+      const contextPayload = JSON.stringify({
+        ...structured,
+        _autoUpdated: now.toISOString(),
+        _sessionId: currentSessionId,
+        _agentType: config.agentType,
+      })
+      await pushToLocigram(config.agentName, currentSessionId, contextPayload, now, contextLocus)
+      log('handoff pushed to Locigram (context)')
+    } catch (e: any) {
+      warn(`Locigram push error (context): ${e.message}`)
+    }
   }
 }
 
@@ -564,6 +582,25 @@ async function logAgentDirCount(): Promise<void> {
   }
 }
 
+// ── Heartbeat ────────────────────────────────────────────────────────────────
+
+async function sendHeartbeat(): Promise<void> {
+  try {
+    const res = await httpPostJson(
+      `${config.locigramUrl}/api/agents/${encodeURIComponent(config.agentName)}/heartbeat`,
+      { agentType: config.agentType, status: 'alive' },
+      { 'Authorization': `Bearer ${config.apiToken}` },
+    )
+    if (res.status >= 200 && res.status < 300) {
+      log('heartbeat sent')
+    } else {
+      warn(`heartbeat failed: ${res.status}`)
+    }
+  } catch (e: any) {
+    warn(`heartbeat error: ${e.message}`)
+  }
+}
+
 // ── Session attachment ───────────────────────────────────────────────────────
 
 async function attachSessionFile(sessionPath: string): Promise<void> {
@@ -615,13 +652,14 @@ async function scanAndMaybeSwitchSession(): Promise<void> {
 
 // ── Shutdown ─────────────────────────────────────────────────────────────────
 
-function setupShutdownHandlers(sessionTimer: NodeJS.Timeout, projectTimer: NodeJS.Timeout | null): void {
+function setupShutdownHandlers(sessionTimer: NodeJS.Timeout, projectTimer: NodeJS.Timeout | null, heartbeatTimer?: NodeJS.Timeout): void {
   const onSignal = async (signal: NodeJS.Signals): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
     log(`received ${signal}; final handoff dump...`)
     clearInterval(sessionTimer)
     if (projectTimer) clearInterval(projectTimer)
+    if (heartbeatTimer) clearInterval(heartbeatTimer)
     if (currentSessionPath) fs.unwatchFile(currentSessionPath)
     try {
       const sizeMb = currentSessionPath ? (await fsp.stat(currentSessionPath)).size / (1024 * 1024) : 0
@@ -668,5 +706,10 @@ export function startDaemon(): void {
     projectTimer = setInterval(() => { void detectProject() }, config.projectDetectMs)
   }
 
-  setupShutdownHandlers(sessionTimer, projectTimer)
+  // Heartbeat every 10 minutes
+  const HEARTBEAT_INTERVAL_MS = 10 * 60_000
+  void sendHeartbeat()
+  const heartbeatTimer = setInterval(() => { void sendHeartbeat() }, HEARTBEAT_INTERVAL_MS)
+
+  setupShutdownHandlers(sessionTimer, projectTimer, heartbeatTimer)
 }

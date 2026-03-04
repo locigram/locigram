@@ -14,6 +14,7 @@ export const config = {
 
   // Agent
   agentName:        process.env.OPENCLAW_AGENT_NAME ?? process.env.AGENT_NAME ?? 'main',
+  agentType:        (process.env.LOCIGRAM_AGENT_TYPE ?? 'permanent') as 'permanent' | 'ephemeral',
   agentsDir:        process.env.OPENCLAW_AGENTS_DIR ?? expandHome('~/.openclaw/agents'),
 
   // Tuning

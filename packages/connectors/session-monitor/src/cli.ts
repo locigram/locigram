@@ -2,6 +2,7 @@
 
 import { config, validateConfig } from './config'
 import { startDaemon } from './daemon'
+import { runComplete } from './complete'
 import { installMacOS, installLinux, uninstall } from './install'
 
 const cmd = process.argv[2]
@@ -10,6 +11,14 @@ switch (cmd) {
   case 'start':
     validateConfig()
     startDaemon()
+    break
+
+  case 'complete':
+    validateConfig()
+    runComplete().catch((err) => {
+      console.error(`[complete] fatal: ${err.message}`)
+      process.exit(1)
+    })
     break
 
   case 'install':
@@ -30,6 +39,7 @@ switch (cmd) {
     console.log(`[status] LOCIGRAM_URL: ${config.locigramUrl || '(not set)'}`)
     console.log(`[status] LOCIGRAM_API_TOKEN: ${config.apiToken ? '***' : '(not set)'}`)
     console.log(`[status] OPENCLAW_AGENT_NAME: ${config.agentName}`)
+    console.log(`[status] LOCIGRAM_AGENT_TYPE: ${config.agentType}`)
     console.log(`[status] OPENCLAW_AGENTS_DIR: ${config.agentsDir}`)
     console.log(`[status] summary every: ${config.summaryEveryN} messages`)
     console.log(`[status] compaction threshold: ${config.compactionMb}mb`)
@@ -62,6 +72,7 @@ switch (cmd) {
 
 Usage:
   locigram-session-monitor start       Run daemon (blocking)
+  locigram-session-monitor complete    One-shot completion summary (ephemeral agents)
   locigram-session-monitor install     Install as system service (launchd/systemd)
   locigram-session-monitor uninstall   Remove system service
   locigram-session-monitor status      Check config and connectivity
@@ -72,6 +83,7 @@ Required environment variables:
 
 Agent configuration:
   OPENCLAW_AGENT_NAME            Agent name (default: main)
+  LOCIGRAM_AGENT_TYPE            Agent type: permanent | ephemeral (default: permanent)
   OPENCLAW_AGENTS_DIR            Path to agents directory (default: ~/.openclaw/agents)
 
 Tuning:
@@ -85,8 +97,7 @@ Optional — handoff file:
   OBSIDIAN_VAULT                  Obsidian vault path for project detection
 
 Optional — Discord:
-  DISCORD_BOT_TOKEN               Discord bot token for posting summaries
-  SESSION_MONITOR_DISCORD_CHANNEL Discord channel ID
+  DISCORD_WEBHOOK_URL             Discord webhook URL for posting summaries
 `)
     break
 }

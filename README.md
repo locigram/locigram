@@ -363,12 +363,24 @@ MCP endpoint: `http://<your-locigram-host>/mcp` (see MCP section below).
 
 #### Session Monitor (`@locigram/session-monitor`)
 
-A daemon that watches OpenClaw agent session JSONL files and generates handoff summaries. Produces two outputs per handoff cycle:
+A daemon that watches OpenClaw agent session JSONL files and generates handoff summaries. Supports both **permanent** (long-running daemon) and **ephemeral** (one-shot completion) agent types.
 
+**Outputs per handoff cycle:**
 - **`live-handoff.md`** — narrative markdown summary (current task, decisions, files changed, next steps)
 - **`active-context.json`** — structured JSON state (currentTask, currentProject, pendingActions, recentDecisions, blockers, activeAgents, domain)
 
-Features: task-aware summarization with domain detection, startup reconciliation (JSON vs narrative cross-check), pending action drift detection (3+ unchanged = stale warning), session continuity (15min window preserves context), end-of-session final snapshot.
+**Locus hierarchy:** Data is organized hierarchically in Locigram:
+- `agent/{name}/session/{sessionId}` — individual session summaries
+- `agent/{name}/context` — current active context (structured state)
+- `agent/{name}/heartbeat` — liveness signals (every 10 min)
+
+**Multi-instance:** Each agent gets its own named system service (`com.locigram.session-monitor.{agentName}` on macOS, `locigram-session-monitor-{agentName}.service` on Linux). Multiple agents coexist without conflict.
+
+**Fleet status:** `GET /api/context/fleet` returns all agents' current state — useful for a main agent to get a standup view.
+
+**Ephemeral agents:** Use `locigram-session-monitor complete` at end of task for a one-shot summary push.
+
+Features: task-aware summarization with domain detection, startup reconciliation, pending action drift detection, session continuity, heartbeat, fleet status query, end-of-session final snapshot.
 
 See [`packages/connectors/session-monitor/README.md`](packages/connectors/session-monitor/README.md) for full documentation.
 
@@ -568,6 +580,63 @@ Built-in agent loci:
 | DevOps | `agent/devops` | `memory_reference` for infrastructure lookups |
 
 To wire your own OpenClaw agent: add the `memory_session_start` call to its `SOUL.md` with the appropriate locus.
+
+---
+
+## Multi-Agent Setup
+
+Locigram supports multiple agents pushing context simultaneously. Each agent can be **permanent** or **ephemeral**.
+
+### Permanent agents
+
+Long-running agents with dedicated session monitors. Each gets its own LaunchAgent (macOS) or systemd unit (Linux). Pushes ongoing context + heartbeats every 10 minutes.
+
+```bash
+# Install session monitor for "main" agent
+OPENCLAW_AGENT_NAME=main LOCIGRAM_URL=... LOCIGRAM_API_TOKEN=... \
+  locigram-session-monitor install
+
+# Install for "devops" agent (separate service, separate logs)
+OPENCLAW_AGENT_NAME=devops LOCIGRAM_URL=... LOCIGRAM_API_TOKEN=... \
+  locigram-session-monitor install
+```
+
+### Ephemeral agents
+
+Spawned for specific tasks, complete and exit. Use the `complete` subcommand to push a one-shot completion summary when done.
+
+```bash
+# Set the agent type
+export LOCIGRAM_AGENT_TYPE=ephemeral
+export OPENCLAW_AGENT_NAME=task-runner-42
+
+# ... agent does work ...
+
+# When done, push completion summary
+locigram-session-monitor complete
+```
+
+### Fleet status
+
+Query all agents' current state via the fleet endpoint:
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3000/api/context/fleet
+```
+
+Returns each agent's `currentTask`, `currentProject`, `blockers`, `domain`, `lastSeen`, and `agentType`.
+
+### Locus hierarchy
+
+Agent data is organized hierarchically:
+
+| Locus | Purpose |
+|-------|---------|
+| `agent/{name}/session/{sessionId}` | Individual session summaries |
+| `agent/{name}/context` | Current active context (structured JSON) |
+| `agent/{name}/heartbeat` | Liveness signals |
+
+Legacy flat loci (`agent/{name}`) are automatically mapped to `agent/{name}/context`.
 
 ---
 

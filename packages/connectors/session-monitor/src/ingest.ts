@@ -27,13 +27,14 @@ function httpPostJson(url: string, body: string, token: string): Promise<{ statu
   })
 }
 
-export async function pushToLocigram(agentName: string, sessionId: string, transcript: string, occurredAt?: Date): Promise<void> {
+export async function pushToLocigram(agentName: string, sessionId: string, transcript: string, occurredAt?: Date, locus?: string): Promise<void> {
   const url = `${config.locigramUrl}/api/sessions/ingest`
   const body = JSON.stringify({
     agentName,
     sessionId,
     transcript,
     occurredAt: (occurredAt ?? new Date()).toISOString(),
+    ...(locus ? { locus } : {}),
   })
 
   const res = await httpPostJson(url, body, config.apiToken)

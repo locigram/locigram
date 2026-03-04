@@ -32,6 +32,7 @@ LOCIGRAM_API_TOKEN=your-api-token          # Locigram palace API token
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
 OPENCLAW_AGENT_NAME=main                   # Which agent to monitor (one daemon per agent)
+LOCIGRAM_AGENT_TYPE=permanent              # Agent type: permanent | ephemeral (default: permanent)
 OPENCLAW_AGENTS_DIR=~/.openclaw/agents     # Where OpenClaw stores agent session files
 
 # ── Tuning ────────────────────────────────────────────────────────────────────
@@ -58,6 +59,126 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 OBSIDIAN_VAULT=~/your-obsidian-vault
 ```
 
+## Agent Types
+
+### Permanent agents (default)
+
+Full daemon behavior. The session monitor runs continuously, watching session files, pushing summaries every N messages, and sending heartbeats every 10 minutes.
+
+```bash
+LOCIGRAM_AGENT_TYPE=permanent  # or omit — permanent is the default
+locigram-session-monitor start
+```
+
+### Ephemeral agents
+
+Spawned for a specific task, complete and exit. Use the `complete` subcommand at the end of a task to push a one-shot completion summary.
+
+```bash
+LOCIGRAM_AGENT_TYPE=ephemeral
+# ... agent does its work ...
+locigram-session-monitor complete   # generates + pushes summary, then exits
+```
+
+The `complete` subcommand:
+1. Finds the most recent session JSONL for the agent
+2. Reads the transcript and calls `/api/internal/summarize` for a one-shot summary
+3. Pushes the summary to Locigram under `agent/{agentName}/session/{sessionId}`
+4. Writes a `completion-report.md` to `LOCIGRAM_HANDOFF_PATH` if set
+5. Exits cleanly
+
+## Locus Hierarchy
+
+The session monitor uses a hierarchical locus scheme to organize agent data in Locigram:
+
+| Locus pattern | Description |
+|---|---|
+| `agent/{name}/session/{sessionId}` | Individual session transcripts/summaries |
+| `agent/{name}/context` | Current active context (latest structured state) |
+| `agent/{name}/heartbeat` | Liveness signals |
+
+Legacy flat loci (e.g. `agent/main`) are still supported — the server maps them to `agent/{name}/context` automatically.
+
+## Multi-Instance Setup
+
+Each agent gets its own named system service. Multiple agents can run simultaneously without overwriting each other.
+
+### macOS (LaunchAgents)
+
+```bash
+# Install for agent "main"
+OPENCLAW_AGENT_NAME=main LOCIGRAM_URL=... LOCIGRAM_API_TOKEN=... \
+  locigram-session-monitor install
+
+# Install for agent "devops" (separate plist, separate logs)
+OPENCLAW_AGENT_NAME=devops LOCIGRAM_URL=... LOCIGRAM_API_TOKEN=... \
+  locigram-session-monitor install
+```
+
+Each agent gets:
+- LaunchAgent label: `com.locigram.session-monitor.{agentName}`
+- Plist file: `~/Library/LaunchAgents/com.locigram.session-monitor.{agentName}.plist`
+- Logs: `/tmp/locigram-session-monitor-{agentName}.log` and `.error.log`
+
+### Linux (systemd)
+
+```bash
+# Install for agent "main"
+OPENCLAW_AGENT_NAME=main LOCIGRAM_URL=... LOCIGRAM_API_TOKEN=... \
+  locigram-session-monitor install
+
+# Install for agent "devops"
+OPENCLAW_AGENT_NAME=devops LOCIGRAM_URL=... LOCIGRAM_API_TOKEN=... \
+  locigram-session-monitor install
+```
+
+Each agent gets:
+- Unit file: `~/.config/systemd/user/locigram-session-monitor-{agentName}.service`
+- Managed independently via `systemctl --user {start|stop|status} locigram-session-monitor-{agentName}.service`
+
+### Uninstall a specific agent
+
+```bash
+OPENCLAW_AGENT_NAME=devops locigram-session-monitor uninstall
+```
+
+## Heartbeat
+
+Permanent agents send a heartbeat to `POST /api/agents/{agentName}/heartbeat` every 10 minutes, even when no new messages are being processed. This allows the fleet status endpoint to detect stale agents.
+
+If no heartbeat is received in 30 minutes, the agent should be considered potentially stale.
+
+The heartbeat includes:
+- `agentType`: "permanent" or "ephemeral"
+- `status`: "alive"
+
+## Fleet Status
+
+Query `GET /api/context/fleet` to see all agents that have pushed context:
+
+```bash
+curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3000/api/context/fleet
+```
+
+Returns:
+```json
+[
+  {
+    "agentName": "main",
+    "currentTask": "Implementing multi-agent architecture",
+    "currentProject": "locigram",
+    "blockers": [],
+    "domain": "coding",
+    "lastSeen": "2026-03-04T12:00:00.000Z",
+    "agentType": "permanent"
+  }
+]
+```
+
+The session monitor's `locigram-context.ts` module exposes:
+- `fetchFleetStatus(config)` — calls `GET /api/context/fleet`
+- `fetchAgentContext(config, agentName)` — calls `GET /api/context/active?locus=agent/{agentName}/context`
+
 ## macOS LaunchAgent (auto-start)
 
 ```bash
@@ -79,7 +200,9 @@ The daemon:
 3. Watches the file with a 2-second poll interval
 4. On file growth, reads only the new bytes (incremental, never re-reads)
 5. Every `LOCIGRAM_SUMMARY_EVERY_N` messages, triggers a summary + push cycle
-6. Switches to a new session file automatically if the agent starts a new conversation
+6. Pushes session summaries to `agent/{name}/session/{sessionId}` and active context to `agent/{name}/context`
+7. Sends heartbeat to `agent/{name}/heartbeat` every 10 minutes
+8. Switches to a new session file automatically if the agent starts a new conversation
 
 ## Outputs
 
@@ -148,24 +271,18 @@ On SIGTERM/SIGINT, the daemon writes a final `active-context.json` with `_finalS
 
 ## What gets pushed to Locigram
 
-Each push sends the LLM-generated summary (not the raw transcript) via `POST /api/sessions/ingest`. The summary is stored in your palace under `locus: agent/{OPENCLAW_AGENT_NAME}` and is retrievable via the `memory_session_start` MCP tool on the next session.
+Each push sends the LLM-generated summary (not the raw transcript) via `POST /api/sessions/ingest`. Summaries are stored under hierarchical loci:
+
+- **Session summaries** → `agent/{agentName}/session/{sessionId}` (every handoff cycle)
+- **Active context** → `agent/{agentName}/context` (structured JSON, every handoff cycle)
+- **Heartbeats** → `agent/{agentName}/heartbeat` (every 10 minutes)
 
 Raw transcript content is never stored — only the extracted summary.
 
-## Multi-agent setup
-
-Run one daemon instance per agent:
-
-```bash
-# Agent: main
-OPENCLAW_AGENT_NAME=main LOCIGRAM_URL=... bun run src/cli.ts start
-
-# Agent: devops
-OPENCLAW_AGENT_NAME=devops LOCIGRAM_URL=... bun run src/cli.ts start
-```
-
-For macOS, install separate LaunchAgents per agent using the `install` command with different `OPENCLAW_AGENT_NAME` values.
-
 ## Future: Locigram as query layer
 
-The `locigram-context.ts` module provides a `fetchActiveContextFromLocigram()` function that will query the Locigram server directly via `GET /api/context/active?locus=agent/{agentName}`. Falls back to disk read if the server is unavailable. This enables agents to query Locigram for active context without relying solely on the local JSON file.
+The `locigram-context.ts` module provides:
+
+- `fetchActiveContextFromLocigram(config)` — queries `GET /api/context/active?locus=agent/{agentName}/context`, falls back to disk
+- `fetchFleetStatus(config)` — queries `GET /api/context/fleet`, returns all agent states
+- `fetchAgentContext(config, agentName)` — queries a specific agent's context

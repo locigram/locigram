@@ -4,11 +4,18 @@ import * as os from 'os'
 import { execSync } from 'child_process'
 import { config } from './config'
 
-const LABEL = 'com.locigram.session-monitor'
+function labelForAgent(agentName: string): string {
+  return `com.locigram.session-monitor.${agentName}`
+}
+
+function unitNameForAgent(agentName: string): string {
+  return `locigram-session-monitor-${agentName}.service`
+}
 
 export function installMacOS(): void {
+  const label = labelForAgent(config.agentName)
   const plistDir = path.join(os.homedir(), 'Library', 'LaunchAgents')
-  const plistPath = path.join(plistDir, `${LABEL}.plist`)
+  const plistPath = path.join(plistDir, `${label}.plist`)
 
   if (!fs.existsSync(plistDir)) {
     fs.mkdirSync(plistDir, { recursive: true })
@@ -22,14 +29,14 @@ export function installMacOS(): void {
   if (config.workspaceRoot) {
     optionalEnvs.push(`    <key>OPENCLAW_WORKSPACE_ROOT</key><string>${config.workspaceRoot}</string>`)
   }
-  if (config.discordToken) {
-    optionalEnvs.push(`    <key>DISCORD_BOT_TOKEN</key><string>${config.discordToken}</string>`)
-  }
-  if (config.discordChannel) {
-    optionalEnvs.push(`    <key>SESSION_MONITOR_DISCORD_CHANNEL</key><string>${config.discordChannel}</string>`)
+  if (config.discordWebhookUrl) {
+    optionalEnvs.push(`    <key>DISCORD_WEBHOOK_URL</key><string>${config.discordWebhookUrl}</string>`)
   }
   if (config.obsidianVault) {
     optionalEnvs.push(`    <key>OBSIDIAN_VAULT</key><string>${config.obsidianVault}</string>`)
+  }
+  if (config.agentType !== 'permanent') {
+    optionalEnvs.push(`    <key>LOCIGRAM_AGENT_TYPE</key><string>${config.agentType}</string>`)
   }
   const optionalBlock = optionalEnvs.length > 0 ? '\n' + optionalEnvs.join('\n') : ''
 
@@ -37,7 +44,7 @@ export function installMacOS(): void {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>${LABEL}</string>
+  <key>Label</key><string>${label}</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/locigram-session-monitor</string>
@@ -52,8 +59,8 @@ export function installMacOS(): void {
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/locigram-session-monitor.log</string>
-  <key>StandardErrorPath</key><string>/tmp/locigram-session-monitor.error.log</string>
+  <key>StandardOutPath</key><string>/tmp/locigram-session-monitor-${config.agentName}.log</string>
+  <key>StandardErrorPath</key><string>/tmp/locigram-session-monitor-${config.agentName}.error.log</string>
 </dict>
 </plist>`
 
@@ -69,15 +76,16 @@ export function installMacOS(): void {
 
   try {
     execSync(`launchctl bootstrap gui/${process.getuid!()} ${plistPath}`, { stdio: 'inherit' })
-    console.log(`[install] LaunchAgent loaded`)
+    console.log(`[install] LaunchAgent loaded: ${label}`)
   } catch (err) {
     console.error(`[install] failed to load LaunchAgent:`, err instanceof Error ? err.message : err)
   }
 }
 
 export function installLinux(): void {
+  const unitName = unitNameForAgent(config.agentName)
   const unitDir = path.join(os.homedir(), '.config', 'systemd', 'user')
-  const unitPath = path.join(unitDir, 'locigram-session-monitor.service')
+  const unitPath = path.join(unitDir, unitName)
 
   if (!fs.existsSync(unitDir)) {
     fs.mkdirSync(unitDir, { recursive: true })
@@ -87,13 +95,13 @@ export function installLinux(): void {
   const optionalEnvs: string[] = []
   if (config.handoffPath) optionalEnvs.push(`Environment=LOCIGRAM_HANDOFF_PATH=${config.handoffPath}`)
   if (config.workspaceRoot) optionalEnvs.push(`Environment=OPENCLAW_WORKSPACE_ROOT=${config.workspaceRoot}`)
-  if (config.discordToken) optionalEnvs.push(`Environment=DISCORD_BOT_TOKEN=${config.discordToken}`)
-  if (config.discordChannel) optionalEnvs.push(`Environment=SESSION_MONITOR_DISCORD_CHANNEL=${config.discordChannel}`)
+  if (config.discordWebhookUrl) optionalEnvs.push(`Environment=DISCORD_WEBHOOK_URL=${config.discordWebhookUrl}`)
   if (config.obsidianVault) optionalEnvs.push(`Environment=OBSIDIAN_VAULT=${config.obsidianVault}`)
+  if (config.agentType !== 'permanent') optionalEnvs.push(`Environment=LOCIGRAM_AGENT_TYPE=${config.agentType}`)
   const optionalBlock = optionalEnvs.length > 0 ? '\n' + optionalEnvs.join('\n') : ''
 
   const unit = `[Unit]
-Description=Locigram Session Monitor
+Description=Locigram Session Monitor (${config.agentName})
 After=network.target
 
 [Service]
@@ -114,9 +122,9 @@ WantedBy=default.target`
 
   try {
     execSync('systemctl --user daemon-reload', { stdio: 'inherit' })
-    execSync('systemctl --user enable locigram-session-monitor.service', { stdio: 'inherit' })
-    execSync('systemctl --user start locigram-session-monitor.service', { stdio: 'inherit' })
-    console.log(`[install] systemd service enabled and started`)
+    execSync(`systemctl --user enable ${unitName}`, { stdio: 'inherit' })
+    execSync(`systemctl --user start ${unitName}`, { stdio: 'inherit' })
+    console.log(`[install] systemd service enabled and started: ${unitName}`)
   } catch (err) {
     console.error(`[install] failed to start systemd service:`, err instanceof Error ? err.message : err)
   }
@@ -124,7 +132,8 @@ WantedBy=default.target`
 
 export function uninstall(): void {
   if (process.platform === 'darwin') {
-    const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`)
+    const label = labelForAgent(config.agentName)
+    const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', `${label}.plist`)
     try {
       execSync(`launchctl bootout gui/${process.getuid!()} ${plistPath}`, { stdio: 'pipe' })
     } catch {
@@ -135,17 +144,18 @@ export function uninstall(): void {
       console.log(`[uninstall] removed ${plistPath}`)
     }
   } else {
+    const unitName = unitNameForAgent(config.agentName)
     try {
-      execSync('systemctl --user stop locigram-session-monitor.service', { stdio: 'pipe' })
-      execSync('systemctl --user disable locigram-session-monitor.service', { stdio: 'pipe' })
+      execSync(`systemctl --user stop ${unitName}`, { stdio: 'pipe' })
+      execSync(`systemctl --user disable ${unitName}`, { stdio: 'pipe' })
     } catch {
       // not running
     }
-    const unitPath = path.join(os.homedir(), '.config', 'systemd', 'user', 'locigram-session-monitor.service')
+    const unitPath = path.join(os.homedir(), '.config', 'systemd', 'user', unitName)
     if (fs.existsSync(unitPath)) {
       fs.unlinkSync(unitPath)
       console.log(`[uninstall] removed ${unitPath}`)
     }
   }
-  console.log(`[uninstall] done`)
+  console.log(`[uninstall] done (agent: ${config.agentName})`)
 }
