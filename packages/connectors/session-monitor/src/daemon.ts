@@ -13,29 +13,30 @@ interface AgentState {
 
 function findNewestJsonl(sessionsDir: string): string | null {
   if (!fs.existsSync(sessionsDir)) return null
-  const now = Date.now()
-  const ACTIVE_WINDOW_MS = 10 * 60 * 1000  // 10 minutes = "recently active"
   const MIN_SIZE = 1000  // ignore tiny stub files
 
-  const files = fs.readdirSync(sessionsDir)
+  const allFiles = fs.readdirSync(sessionsDir)
+  const lockFiles = new Set(allFiles.filter(f => f.endsWith('.jsonl.lock')).map(f => f.replace('.lock', '')))
+
+  const files = allFiles
     .filter(f => f.endsWith('.jsonl'))
     .map(f => {
       const stat = fs.statSync(path.join(sessionsDir, f))
-      return { name: f, mtime: stat.mtimeMs, size: stat.size }
+      return { name: f, mtime: stat.mtimeMs, size: stat.size, hasLock: lockFiles.has(f) }
     })
+    .filter(f => f.size >= MIN_SIZE)
 
-  // Prefer files modified in the last 10 min with real content — pick the largest among those
-  const recentlyActive = files.filter(f => f.size >= MIN_SIZE && (now - f.mtime) < ACTIVE_WINDOW_MS)
-  if (recentlyActive.length > 0) {
-    recentlyActive.sort((a, b) => b.mtime - a.mtime)  // most recently touched among active
-    return path.join(sessionsDir, recentlyActive[0].name)
+  // First priority: files with an active .lock (OpenClaw is currently writing to these)
+  const locked = files.filter(f => f.hasLock)
+  if (locked.length > 0) {
+    locked.sort((a, b) => b.mtime - a.mtime)
+    return path.join(sessionsDir, locked[0].name)
   }
 
-  // Fall back to largest file if nothing recently active
-  const nonStubs = files.filter(f => f.size >= MIN_SIZE)
-  if (nonStubs.length === 0) return null
-  nonStubs.sort((a, b) => b.size - a.size)
-  return path.join(sessionsDir, nonStubs[0].name)
+  // Fall back: most recently modified non-stub file
+  if (files.length === 0) return null
+  files.sort((a, b) => b.mtime - a.mtime)
+  return path.join(sessionsDir, files[0].name)
 }
 
 function extractSessionId(filePath: string): string {
