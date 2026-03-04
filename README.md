@@ -509,9 +509,29 @@ access_score = access_count / (days_since_last_access + 1) ^ λ
 
 - `access_count` — incremented every time this locigram is returned in a recall query
 - `days_since_last_access` — computed at sweep time, not stored
-- `λ` (lambda) — **decay factor** (default `0.6`); higher = faster forgetting
+- `λ` (lambda) — **decay factor** (**confirmed default: `0.6`**); higher = faster forgetting
 
 The score is *recomputed*, not decremented. This means no write-heavy decay daemon, no drift if the job misses a night, and the formula self-corrects on the next run.
+
+> **Plain English:** The score is *how often is this memory used, penalized by how long it's been idle.* Same access count — time kills the score. A memory retrieved 10 times last week scores high. That same memory retrieved 10 times but six months ago scores low.
+
+**Concrete examples at λ=0.6:**
+
+| Memory | Accesses | Last retrieved | Score | Tier |
+|--------|----------|----------------|-------|------|
+| "Acme Corp uses Lacerte for tax season" | 20 | 2 days ago | ~14.9 | 🔥 hot |
+| "Contoso has 13 managed devices" | 5 | 30 days ago | ~0.6 | 🌤 warm |
+| "Meeting note from January" | 2 | 90 days ago | ~0.08 | 🧊 cold |
+| Automated notification nobody retrieved | 0 | never | 0 | 🗑 noise queue |
+
+**λ and thresholds are independent.** λ shapes the decay curve. Thresholds decide when to act on it.
+
+| λ value | Time to go cold (from 1 access) |
+|---------|----------------------------------|
+| `0.3` | ~2 years |
+| `0.6` | **~6 months** ← confirmed default |
+| `0.8` | ~6 weeks |
+| `1.0` | ~3 weeks |
 
 **Tier transition thresholds (configurable):**
 
