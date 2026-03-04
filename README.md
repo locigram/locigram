@@ -585,11 +585,11 @@ To wire your own OpenClaw agent: add the `memory_session_start` call to its `SOU
 
 ## Multi-Agent Setup
 
-Locigram supports multiple agents pushing context simultaneously. Each agent can be **permanent** or **ephemeral**.
+Locigram supports multiple agents pushing context simultaneously. Each agent is either **permanent** or **ephemeral** (`LOCIGRAM_AGENT_TYPE` env var).
 
 ### Permanent agents
 
-Long-running agents with dedicated session monitors. Each gets its own LaunchAgent (macOS) or systemd unit (Linux). Pushes ongoing context + heartbeats every 10 minutes.
+Long-running agents with dedicated session monitors. Each gets its own LaunchAgent (macOS) or systemd unit (Linux). Pushes ongoing context to `agent/{name}/context` + heartbeats every 10 minutes. Appears in fleet status.
 
 ```bash
 # Install session monitor for "main" agent
@@ -603,22 +603,21 @@ OPENCLAW_AGENT_NAME=devops LOCIGRAM_URL=... LOCIGRAM_API_TOKEN=... \
 
 ### Ephemeral agents
 
-Spawned for specific tasks, complete and exit. Use the `complete` subcommand to push a one-shot completion summary when done.
+Spawned for specific tasks, complete and exit. Push to `agent/{name}/session/{sessionId}` only — they do **not** push to `agent/{name}/context` and therefore do **not** appear in fleet status.
 
 ```bash
-# Set the agent type
 export LOCIGRAM_AGENT_TYPE=ephemeral
 export OPENCLAW_AGENT_NAME=task-runner-42
 
 # ... agent does work ...
 
-# When done, push completion summary
+# When done, push completion summary and exit
 locigram-session-monitor complete
 ```
 
-### Fleet status
+### Fleet status (permanent agents only)
 
-Query all agents' current state via the fleet endpoint:
+Query all permanent agents' current state via the fleet endpoint (queries `agent/*/context` loci):
 
 ```bash
 curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3000/api/context/fleet
@@ -626,15 +625,19 @@ curl -H "Authorization: Bearer $API_TOKEN" http://localhost:3000/api/context/fle
 
 Returns each agent's `currentTask`, `currentProject`, `blockers`, `domain`, `lastSeen`, and `agentType`.
 
+### active-context.json
+
+Auto-maintained structured JSON state written alongside each handoff dump. Never edit manually — the session monitor owns this file. Contains `currentTask`, `currentProject`, `pendingActions`, `recentDecisions`, `blockers`, `activeAgents`, `domain`, plus metadata fields (`_autoUpdated`, `_sessionId`, `_finalSnapshot`).
+
 ### Locus hierarchy
 
 Agent data is organized hierarchically:
 
-| Locus | Purpose |
-|-------|---------|
-| `agent/{name}/session/{sessionId}` | Individual session summaries |
-| `agent/{name}/context` | Current active context (structured JSON) |
-| `agent/{name}/heartbeat` | Liveness signals |
+| Locus | Written by | Purpose |
+|-------|-----------|---------|
+| `agent/{name}/session/{sessionId}` | Both permanent and ephemeral | Individual session summaries |
+| `agent/{name}/context` | Permanent only | Current active context (structured JSON). Powers fleet status. |
+| `agent/{name}/heartbeat` | Permanent only | Liveness signals (every 10 min) |
 
 Legacy flat loci (`agent/{name}`) are automatically mapped to `agent/{name}/context`.
 
