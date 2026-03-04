@@ -9,7 +9,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
   }
 
   const expected = c.get('palace').apiToken
-  if (expected && token !== expected) {
+  if (!expected || token !== expected) {
     throw new HTTPException(403, { message: 'Invalid token' })
   }
 

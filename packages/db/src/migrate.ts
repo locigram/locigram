@@ -131,6 +131,16 @@ await sql`
   )
 `
 
+await sql`
+  CREATE TABLE IF NOT EXISTS sync_cursors (
+    palace_id   TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    cursor      TEXT NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (palace_id, source)
+  )
+`
+
 // ── Indexes ───────────────────────────────────────────────────────────────────
 
 // locigrams — btree
@@ -181,9 +191,9 @@ await sql`CREATE INDEX retrieval_events_ids_gin     ON retrieval_events USING GI
 // ── Seed palace ───────────────────────────────────────────────────────────────
 
 await sql`
-  INSERT INTO palaces (id, name, owner_id)
-  VALUES (${palaceId}, ${palaceName}, 'system')
-  ON CONFLICT (id) DO NOTHING
+  INSERT INTO palaces (id, name, owner_id, api_token)
+  VALUES (${palaceId}, ${palaceName}, 'system', ${process.env.API_TOKEN ?? ''})
+  ON CONFLICT (id) DO UPDATE SET api_token = EXCLUDED.api_token
 `
 
 await sql.end()
