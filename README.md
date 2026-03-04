@@ -393,7 +393,7 @@ curl -X POST http://localhost:3000/api/webhook/ingest \
 - **Pipeline** — ingests raw content, calls LLM to extract entities + memory units
 - **Truth engine** — promotes repeated facts into truths with confidence scores; merges co-retrieved clusters
 - **Connectors** — pull from external sources; auto-activated by env vars
-- **Sweep worker** — nightly K8s CronJob; recomputes access scores using inverse power-law decay, demotes stale tiers, queues confirmed noise for expiry
+- **Sweep worker** — nightly K8s CronJob (2am); two bulk SQL statements — CTE computes inverse power-law decay scores + updates tiers in one roundtrip; second statement queues cold noise for LLM re-assessment; near-zero memory footprint at any scale
 - **Cluster worker** — weekly K8s CronJob; co-occurrence analysis on retrieval history, flags frequently co-retrieved locigrams for truth merging
 
 **Two ingestion paths:**
@@ -512,6 +512,8 @@ access_score = access_count / (days_since_last_access + 1) ^ λ
 - `λ` (lambda) — **decay factor** (**confirmed default: `0.6`**); higher = faster forgetting
 
 The score is *recomputed*, not decremented. This means no write-heavy decay daemon, no drift if the job misses a night, and the formula self-corrects on the next run.
+
+**Implementation: two SQL statements, not a row loop.** The sweep uses a CTE to compute all scores inline in Postgres and updates every row in a single bulk UPDATE. A second statement queues cold + very-low-score locigrams for LLM noise re-assessment. Two roundtrips total regardless of table size — near-zero memory on the pod, finishes in seconds at any realistic scale.
 
 > **Plain English:** The score is *how often is this memory used, penalized by how long it's been idle.* Same access count — time kills the score. A memory retrieved 10 times last week scores high. That same memory retrieved 10 times but six months ago scores low.
 
