@@ -1,82 +1,92 @@
 import postgres from 'postgres'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import * as schema from '@locigram/db'
-import { locigrams } from '@locigram/db'
-import { eq, and, lt, inArray, sql } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import type { DB } from '@locigram/db'
 
-const DECAY_FACTOR         = parseFloat(process.env.LOCIGRAM_DECAY_FACTOR          ?? '0.6')
-const HOT_THRESHOLD        = parseFloat(process.env.LOCIGRAM_DECAY_HOT_THRESHOLD   ?? '0.3')
-const WARM_THRESHOLD       = parseFloat(process.env.LOCIGRAM_DECAY_WARM_THRESHOLD  ?? '0.1')
-const NOISE_THRESHOLD      = parseFloat(process.env.LOCIGRAM_DECAY_NOISE_THRESHOLD ?? '0.05')
+const DECAY_FACTOR    = parseFloat(process.env.LOCIGRAM_DECAY_FACTOR          ?? '0.6')
+const HOT_THRESHOLD   = parseFloat(process.env.LOCIGRAM_DECAY_HOT_THRESHOLD   ?? '0.3')
+const WARM_THRESHOLD  = parseFloat(process.env.LOCIGRAM_DECAY_WARM_THRESHOLD  ?? '0.1')
+const NOISE_THRESHOLD = parseFloat(process.env.LOCIGRAM_DECAY_NOISE_THRESHOLD ?? '0.05')
 
 export async function runSweep(db: DB, palaceId: string): Promise<void> {
   console.log(`[sweep][${palaceId}] starting decay sweep`)
-  const now = Date.now()
 
-  // Fetch all hot + warm knowledge locigrams (skip is_reference — they never decay)
-  const candidates = await db
-    .select()
-    .from(locigrams)
-    .where(
-      and(
-        eq(locigrams.palaceId, palaceId),
-        eq(locigrams.isReference, false),
-        inArray(locigrams.tier, ['hot', 'warm']),
-      )
+  // ── Single bulk UPDATE — no row loop, no memory pressure ──────────────────
+  //
+  // Formula: access_score = access_count / (days_since_last_access + 1) ^ λ
+  //
+  // Uses a CTE to compute new scores first, then joins back to update.
+  // One roundtrip to Postgres regardless of table size.
+  //
+  const result = await db.execute(sql`
+    WITH scored AS (
+      SELECT
+        id,
+        tier,
+        access_count::float /
+          POWER(
+            EXTRACT(EPOCH FROM (
+              NOW() - COALESCE(last_accessed_at, created_at)
+            )) / 86400.0 + 1,
+            ${DECAY_FACTOR}
+          ) AS new_score
+      FROM locigrams
+      WHERE palace_id  = ${palaceId}
+        AND is_reference = FALSE
+        AND tier IN ('hot', 'warm')
+        AND expires_at IS NULL
     )
+    UPDATE locigrams l
+    SET
+      access_score = s.new_score,
+      tier = CASE
+        WHEN l.tier = 'hot'  AND s.new_score < ${HOT_THRESHOLD}  THEN 'warm'
+        WHEN l.tier = 'warm' AND s.new_score < ${WARM_THRESHOLD} THEN 'cold'
+        ELSE l.tier
+      END
+    FROM scored s
+    WHERE l.id = s.id
+    RETURNING
+      l.id,
+      l.tier                                                    AS new_tier,
+      (l.tier != CASE
+        WHEN s.tier = 'hot'  AND s.new_score < ${HOT_THRESHOLD}  THEN 'warm'
+        WHEN s.tier = 'warm' AND s.new_score < ${WARM_THRESHOLD} THEN 'cold'
+        ELSE s.tier
+       END)                                                     AS tier_changed,
+      s.tier                                                    AS old_tier
+  `) as Array<{ id: string; new_tier: string; tier_changed: boolean; old_tier: string }>
 
-  let demotedToWarm = 0
-  let demotedToCold = 0
-  let queuedForAssess = 0
+  const demotedToWarm = result.filter(r => r.tier_changed && r.new_tier === 'warm').length
+  const demotedToCold = result.filter(r => r.tier_changed && r.new_tier === 'cold').length
 
-  for (const loc of candidates) {
-    // Compute days since last access (use created_at if never accessed)
-    const lastActivity = loc.lastAccessedAt ?? loc.createdAt
-    const daysSince = (now - new Date(lastActivity).getTime()) / (1000 * 60 * 60 * 24)
+  // ── Queue cold + very-low-score locigrams for noise re-assessment ──────────
+  //
+  // Single UPDATE — sets metadata flag on eligible cold locigrams.
+  // Skips already-queued rows (metadata->>'assess_queued' IS NULL guard).
+  //
+  const noiseResult = await db.execute(sql`
+    UPDATE locigrams
+    SET metadata = metadata || '{"assess_queued": true}'::jsonb
+    WHERE palace_id    = ${palaceId}
+      AND tier         = 'cold'
+      AND is_reference = FALSE
+      AND access_score < ${NOISE_THRESHOLD}
+      AND expires_at   IS NULL
+      AND (metadata->>'assess_queued') IS NULL
+    RETURNING id
+  `) as Array<{ id: string }>
 
-    // Inverse power-law decay: access_score = access_count / (days + 1) ^ λ
-    const newScore = loc.accessCount / Math.pow(daysSince + 1, DECAY_FACTOR)
+  const queuedForAssess = noiseResult.length
 
-    let newTier = loc.tier
-
-    if (loc.tier === 'hot' && newScore < HOT_THRESHOLD) {
-      newTier = 'warm'
-      demotedToWarm++
-    } else if (loc.tier === 'warm' && newScore < WARM_THRESHOLD) {
-      newTier = 'cold'
-      demotedToCold++
-    }
-
-    await db.update(locigrams)
-      .set({ accessScore: newScore, tier: newTier })
-      .where(eq(locigrams.id, loc.id))
-  }
-
-  // Queue cold + very-low-score locigrams for noise re-assessment
-  const coldNoise = await db
-    .select({ id: locigrams.id })
-    .from(locigrams)
-    .where(
-      and(
-        eq(locigrams.palaceId, palaceId),
-        eq(locigrams.tier, 'cold'),
-        eq(locigrams.isReference, false),
-        lt(locigrams.accessScore, NOISE_THRESHOLD),
-        sql`expires_at IS NULL`,  // not already expired
-      )
-    )
-
-  // Mark as queued for assessment by setting metadata flag
-  if (coldNoise.length > 0) {
-    const ids = coldNoise.map(r => r.id)
-    await db.update(locigrams)
-      .set({ metadata: sql`metadata || '{"assess_queued": true}'::jsonb` })
-      .where(and(eq(locigrams.palaceId, palaceId), inArray(locigrams.id, ids)))
-    queuedForAssess = ids.length
-  }
-
-  console.log(`[sweep][${palaceId}] done — hot→warm: ${demotedToWarm}, warm→cold: ${demotedToCold}, queued for assess: ${queuedForAssess}`)
+  console.log(
+    `[sweep][${palaceId}] done — ` +
+    `updated: ${result.length}, ` +
+    `hot→warm: ${demotedToWarm}, ` +
+    `warm→cold: ${demotedToCold}, ` +
+    `queued for assess: ${queuedForAssess}`
+  )
 }
 
 // Standalone entry point (for K8s CronJob)
