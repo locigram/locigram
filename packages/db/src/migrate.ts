@@ -169,56 +169,56 @@ await sql`
 
 // locigrams — btree
 await sql`CREATE UNIQUE INDEX locigrams_source_ref_unique  ON locigrams(palace_id, source_ref) WHERE source_ref IS NOT NULL`
-await sql`CREATE INDEX locigrams_palace_id_idx             ON locigrams(palace_id)`
-await sql`CREATE INDEX locigrams_locus_idx                 ON locigrams(palace_id, locus)`
-await sql`CREATE INDEX locigrams_source_type_idx           ON locigrams(palace_id, source_type)`
-await sql`CREATE INDEX locigrams_connector_idx             ON locigrams(palace_id, connector)`
-await sql`CREATE INDEX locigrams_client_id_idx             ON locigrams(palace_id, client_id) WHERE client_id IS NOT NULL`
-await sql`CREATE INDEX locigrams_tier_idx                  ON locigrams(palace_id, tier)`
-await sql`CREATE INDEX locigrams_is_reference_idx          ON locigrams(palace_id, is_reference)`
-await sql`CREATE INDEX locigrams_reference_type_idx        ON locigrams(palace_id, reference_type) WHERE reference_type IS NOT NULL`
-await sql`CREATE INDEX locigrams_occurred_at_idx           ON locigrams(palace_id, occurred_at) WHERE occurred_at IS NOT NULL`
-await sql`CREATE INDEX locigrams_created_at_idx            ON locigrams(palace_id, created_at)`
-await sql`CREATE INDEX locigrams_expires_at_idx            ON locigrams(expires_at) WHERE expires_at IS NOT NULL`
-await sql`CREATE INDEX locigrams_embedding_pending_idx     ON locigrams(palace_id) WHERE embedding_id IS NULL AND tier IN ('hot','warm')`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_palace_id_idx             ON locigrams(palace_id)`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_locus_idx                 ON locigrams(palace_id, locus)`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_source_type_idx           ON locigrams(palace_id, source_type)`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_connector_idx             ON locigrams(palace_id, connector)`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_client_id_idx             ON locigrams(palace_id, client_id) WHERE client_id IS NOT NULL`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_tier_idx                  ON locigrams(palace_id, tier)`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_is_reference_idx          ON locigrams(palace_id, is_reference)`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_reference_type_idx        ON locigrams(palace_id, reference_type) WHERE reference_type IS NOT NULL`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_occurred_at_idx           ON locigrams(palace_id, occurred_at) WHERE occurred_at IS NOT NULL`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_created_at_idx            ON locigrams(palace_id, created_at)`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_expires_at_idx            ON locigrams(expires_at) WHERE expires_at IS NOT NULL`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_embedding_pending_idx     ON locigrams(palace_id) WHERE embedding_id IS NULL AND tier IN ('hot','warm')`
 
 // locigrams — access scoring
-await sql`CREATE INDEX locigrams_access_score_idx      ON locigrams(palace_id, access_score)`
-await sql`CREATE INDEX locigrams_last_accessed_idx     ON locigrams(palace_id, last_accessed_at) WHERE last_accessed_at IS NOT NULL`
-await sql`CREATE INDEX locigrams_cluster_candidate_idx ON locigrams(palace_id, cluster_candidate) WHERE cluster_candidate = TRUE`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_access_score_idx      ON locigrams(palace_id, access_score)`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_last_accessed_idx     ON locigrams(palace_id, last_accessed_at) WHERE last_accessed_at IS NOT NULL`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_cluster_candidate_idx ON locigrams(palace_id, cluster_candidate) WHERE cluster_candidate = TRUE`
 
 // locigrams — GIN
-await sql`CREATE INDEX locigrams_entities_gin  ON locigrams USING GIN(entities)`
-await sql`CREATE INDEX locigrams_metadata_gin  ON locigrams USING GIN(metadata)`
-await sql`CREATE INDEX locigrams_fts_idx       ON locigrams USING GIN(to_tsvector('english', content))`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_entities_gin  ON locigrams USING GIN(entities)`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_metadata_gin  ON locigrams USING GIN(metadata)`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_fts_idx       ON locigrams USING GIN(to_tsvector('english', content))`
 
 // truths
-await sql`CREATE INDEX truths_palace_id_idx   ON truths(palace_id)`
-await sql`CREATE INDEX truths_locus_idx        ON truths(palace_id, locus)`
-await sql`CREATE INDEX truths_confidence_idx   ON truths(palace_id, confidence)`
-await sql`CREATE INDEX truths_last_seen_idx    ON truths(last_seen)`
+await sql`CREATE INDEX IF NOT EXISTS truths_palace_id_idx   ON truths(palace_id)`
+await sql`CREATE INDEX IF NOT EXISTS truths_locus_idx        ON truths(palace_id, locus)`
+await sql`CREATE INDEX IF NOT EXISTS truths_confidence_idx   ON truths(palace_id, confidence)`
+await sql`CREATE INDEX IF NOT EXISTS truths_last_seen_idx    ON truths(last_seen)`
 
 // entities
-await sql`CREATE INDEX entities_palace_id_idx ON entities(palace_id)`
-await sql`CREATE INDEX entities_type_idx       ON entities(palace_id, type)`
-await sql`CREATE INDEX entities_aliases_gin    ON entities USING GIN(aliases)`
+await sql`CREATE INDEX IF NOT EXISTS entities_palace_id_idx ON entities(palace_id)`
+await sql`CREATE INDEX IF NOT EXISTS entities_type_idx       ON entities(palace_id, type)`
+await sql`CREATE INDEX IF NOT EXISTS entities_aliases_gin    ON entities USING GIN(aliases)`
 
 // sources
-await sql`CREATE INDEX sources_locigram_id_idx ON sources(locigram_id)`
-await sql`CREATE INDEX sources_palace_id_idx   ON sources(palace_id)`
-await sql`CREATE INDEX sources_connector_idx   ON sources(palace_id, connector)`
+await sql`CREATE INDEX IF NOT EXISTS sources_locigram_id_idx ON sources(locigram_id)`
+await sql`CREATE INDEX IF NOT EXISTS sources_palace_id_idx   ON sources(palace_id)`
+await sql`CREATE INDEX IF NOT EXISTS sources_connector_idx   ON sources(palace_id, connector)`
 
 // retrieval_events
-await sql`CREATE INDEX retrieval_events_palace_idx  ON retrieval_events(palace_id, retrieved_at)`
-await sql`CREATE INDEX retrieval_events_ids_gin     ON retrieval_events USING GIN(locigram_ids)`
+await sql`CREATE INDEX IF NOT EXISTS retrieval_events_palace_idx  ON retrieval_events(palace_id, retrieved_at)`
+await sql`CREATE INDEX IF NOT EXISTS retrieval_events_ids_gin     ON retrieval_events USING GIN(locigram_ids)`
 
 // oauth_clients
-await sql`CREATE INDEX oauth_clients_palace_id_idx ON oauth_clients(palace_id)`
-await sql`CREATE INDEX oauth_clients_revoked_idx   ON oauth_clients(palace_id) WHERE revoked_at IS NULL`
+await sql`CREATE INDEX IF NOT EXISTS oauth_clients_palace_id_idx ON oauth_clients(palace_id)`
+await sql`CREATE INDEX IF NOT EXISTS oauth_clients_revoked_idx   ON oauth_clients(palace_id) WHERE revoked_at IS NULL`
 
 // oauth_codes
-await sql`CREATE INDEX oauth_codes_client_id_idx ON oauth_codes(client_id)`
-await sql`CREATE INDEX oauth_codes_expires_idx   ON oauth_codes(expires_at)`
+await sql`CREATE INDEX IF NOT EXISTS oauth_codes_client_id_idx ON oauth_codes(client_id)`
+await sql`CREATE INDEX IF NOT EXISTS oauth_codes_expires_idx   ON oauth_codes(expires_at)`
 
 // ── Seed palace ───────────────────────────────────────────────────────────────
 
