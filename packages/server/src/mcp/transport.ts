@@ -64,9 +64,13 @@ export function createMcpHandler(
     if (apiToken) {
       const token = req.headers.get('Authorization')?.replace('Bearer ', '')
       if (token !== apiToken) {
+        const publicUrl = process.env.LOCIGRAM_PUBLIC_URL || 'http://localhost:3000'
         return new Response(JSON.stringify({ error: 'Unauthorized' }), {
           status: 401,
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'WWW-Authenticate': `Bearer realm="locigram", resource_metadata="${publicUrl}/.well-known/oauth-protected-resource"`,
+          },
         })
       }
     }

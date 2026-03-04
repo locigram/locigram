@@ -19,7 +19,7 @@ import { feedbackRoute } from './routes/feedback'
 import { bootstrapRoute } from './routes/bootstrap'
 import { createMcpHandler } from './mcp/transport'
 import { autoRegisterConnectors } from './connectors'
-import { metadataRoute } from './oauth/metadata'
+import { metadataRoute, protectedResourceRoute } from './oauth/metadata'
 import { clientsRoute } from './oauth/clients'
 import { authorizeRoute } from './oauth/authorize'
 import { tokenRoute } from './oauth/token'
@@ -117,6 +117,7 @@ export function createApp(config: AppConfig) {
 
   // ── OAuth 2.0 (unauthenticated — OAuth handles its own auth) ──────────────
   app.route('/.well-known/oauth-authorization-server', metadataRoute)
+  app.route('/.well-known/oauth-protected-resource', protectedResourceRoute)
   app.route('/oauth/authorize', authorizeRoute)
   app.route('/oauth/token', tokenRoute)
 
