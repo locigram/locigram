@@ -215,13 +215,18 @@ export function createApp(config: AppConfig) {
   // ── MCP endpoint (exempt from auth middleware — bearer check inline) ──────
   let mcpHandler: ((req: Request) => Promise<Response>) | null = null
 
-  app.all('/mcp/*', async (c) => {
+  // MCP handler mounted at both /mcp/* (explicit) and /* (root — for clients that use base URL directly)
+  const handleMcp = async (c: any) => {
     if (!mcpHandler) {
       const palace = c.get('palace') as import('@locigram/db').Palace
       mcpHandler = createMcpHandler(db, palace, vectorClient, collectionName, config.apiToken)
     }
     return mcpHandler(c.req.raw)
-  })
+  }
+  app.all('/mcp/*', handleMcp)
+  app.all('/mcp', handleMcp)
+  // Root path — Claude.ai uses the base URL directly as the MCP endpoint
+  app.all('/', handleMcp)
 
   // Cleanup on shutdown
   const originalFetch = app.fetch.bind(app)
