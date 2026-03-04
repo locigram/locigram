@@ -384,6 +384,8 @@ Features: task-aware summarization with domain detection, startup reconciliation
 
 See [`packages/connectors/session-monitor/README.md`](packages/connectors/session-monitor/README.md) for full documentation.
 
+**Agent workspace integration** — connecting the session monitor to an OpenClaw agent requires changes to both the install config and the agent's workspace files (SOUL.md, AGENTS.md). See [`docs/openclaw-integration.md`](docs/openclaw-integration.md) for the complete guide.
+
 #### External connectors (pull-based — activate by setting env vars)
 | Variable | Connector | Description |
 |----------|-----------|-------------|
