@@ -62,7 +62,9 @@ export function createMcpHandler(
   return async (req: Request): Promise<Response> => {
     // Bearer auth (only if apiToken configured)
     if (apiToken) {
-      const token = req.headers.get('Authorization')?.replace('Bearer ', '')
+      const authHeader = req.headers.get('Authorization') ?? req.headers.get('authorization') ?? ''
+      const token = authHeader.replace(/^[Bb]earer\s+/, '')
+      console.log(`[mcp-auth] method=${req.method} auth-header=${authHeader.substring(0, 32) || '(none)'} token-prefix=${token.substring(0, 16) || '(none)'} expected-prefix=${apiToken.substring(0, 16)}`)
       if (token !== apiToken) {
         const publicUrl = process.env.LOCIGRAM_PUBLIC_URL || 'http://localhost:3000'
         return new Response(JSON.stringify({ error: 'Unauthorized' }), {
