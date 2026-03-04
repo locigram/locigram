@@ -26,10 +26,14 @@ function findNewestJsonl(sessionsDir: string): string | null {
     })
     .filter(f => f.size >= MIN_SIZE)
 
-  // First priority: files with an active .lock (OpenClaw is currently writing to these)
+  // First priority: files with an active .lock — sort by lock file mtime (most recently touched lock = active session)
   const locked = files.filter(f => f.hasLock)
   if (locked.length > 0) {
-    locked.sort((a, b) => b.mtime - a.mtime)
+    locked.sort((a, b) => {
+      const lockMtimeA = fs.statSync(path.join(sessionsDir, a.name + '.lock')).mtimeMs
+      const lockMtimeB = fs.statSync(path.join(sessionsDir, b.name + '.lock')).mtimeMs
+      return lockMtimeB - lockMtimeA  // newest lock wins
+    })
     return path.join(sessionsDir, locked[0].name)
   }
 
