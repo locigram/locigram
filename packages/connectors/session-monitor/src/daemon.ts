@@ -317,17 +317,13 @@ async function triggerHandoffDump(triggerSizeMb: number, triggerReason = 'file-s
 
   lastHandoffAt = Date.now()
 
-  // Post summary to Discord if configured
-  if (config.discordToken && config.discordChannel) {
+  // Post summary to Discord webhook if configured
+  if (config.discordWebhookUrl) {
     try {
       const truncated = summary.length > 1800 ? summary.slice(0, 1800) + '\n\u2026*(truncated)*' : summary
       const msg = `**Session Handoff \u2014 ${config.agentName}**\n_${formatTimestamp(now)} \u00b7 ${triggerReason}_\n\n${truncated}`
-      await httpPostJson(
-        `https://discord.com/api/v10/channels/${config.discordChannel}/messages`,
-        { content: msg },
-        { 'Authorization': `Bot ${config.discordToken}` },
-      )
-      log(`handoff posted to Discord channel ${config.discordChannel}`)
+      await httpPostJson(config.discordWebhookUrl, { content: msg }, {})
+      log('handoff posted to Discord')
     } catch (e: any) {
       warn(`Discord post failed: ${e.message}`)
     }
@@ -482,7 +478,7 @@ export function startDaemon(): void {
   log(`summary every ${config.summaryEveryN} messages`)
   log(`compaction threshold: ${config.compactionMb}mb`)
   if (config.handoffPath) log(`handoff path: ${config.handoffPath}`)
-  if (config.discordToken) log(`discord: channel ${config.discordChannel}`)
+  if (config.discordWebhookUrl) log('discord: webhook configured')
   log(`locigram: ${config.locigramUrl}`)
 
   void scanAndMaybeSwitchSession()

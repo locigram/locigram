@@ -43,12 +43,6 @@ LOCIGRAM_COMPACTION_MB=8                   # Also push if session file exceeds t
 LOCIGRAM_HANDOFF_PATH=~/.openclaw/workspace/state/live-handoff.md
 OPENCLAW_WORKSPACE_ROOT=~/.openclaw/workspace   # For archiving handoffs to memory/YYYY-MM-DD.md
 
-# ── Discord (optional) ────────────────────────────────────────────────────────
-# Post session summaries to a Discord channel.
-# Omit DISCORD_BOT_TOKEN entirely to disable Discord integration.
-DISCORD_BOT_TOKEN=your-discord-bot-token
-SESSION_MONITOR_DISCORD_CHANNEL=your-channel-id
-
 # ── Obsidian (optional) ───────────────────────────────────────────────────────
 # Enable LLM-based project detection from your Obsidian vault.
 OBSIDIAN_VAULT=~/your-obsidian-vault
