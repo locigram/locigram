@@ -84,7 +84,7 @@ fleetRoute.get('/', async (c) => {
     ORDER BY split_part(locus, '/', 2), created_at DESC
   `)
 
-  const agents = rows.rows.map((row: any) => {
+  const agents = (rows.rows ?? rows).map((row: any) => {
     const locus = row.locus as string
     const agentName = locus.split('/')[1] ?? 'unknown'
 
