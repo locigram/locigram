@@ -141,7 +141,8 @@ export function createApp(config: AppConfig) {
       sourceType: 'llm-session',
       sourceRef:  snapshotRef,
       occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
-      metadata:   { agent_name: agentName, session_id: sessionId, connector: 'locigram-session-monitor', palace_id: palace.id },
+      locus:      `agent/${agentName}`,
+      metadata:   { agent_name: agentName, session_id: sessionId, connector: 'locigram-session-monitor' },
     }
 
     const { ingest } = await import('@locigram/pipeline')
