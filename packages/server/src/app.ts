@@ -168,7 +168,7 @@ export function createApp(config: AppConfig) {
         },
         body: JSON.stringify({
           model,
-          messages: [{ role: 'user', content: noThink ? wrappedPrompt + ' /no_think' : wrappedPrompt }],
+          messages: [{ role: 'user', content: wrappedPrompt + ' /no_think' }],
           max_tokens: maxTokens ?? 1200,
         }),
       })
@@ -176,7 +176,12 @@ export function createApp(config: AppConfig) {
       const text = await res.text()
       const parsed = JSON.parse(text)
       const content = parsed.choices?.[0]?.message?.content ?? ''
-      const cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+      let cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+      // Strip plain-text thinking blocks (models that don't use <think> tags)
+      const domainMarker = cleaned.indexOf('**Domain:**')
+      if (domainMarker > 0) {
+        cleaned = cleaned.slice(domainMarker)
+      }
 
       // Split into narrative + structured
       const separatorIdx = cleaned.indexOf('---STRUCTURED_JSON---')

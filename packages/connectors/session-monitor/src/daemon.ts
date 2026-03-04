@@ -32,31 +32,34 @@ interface LlmResult {
   structured: StructuredContext | null
 }
 
+interface AgentWatcherState {
+  agentName: string
+  currentSessionPath: string | null
+  currentSessionId: string
+  lastReadPosition: number
+  pendingLineBuffer: string
+  parsedMessageCount: number
+  sectionNumber: number
+  lastHandoffAt: number
+  lastSummaryMessageCount: number
+  lastSessionSwitchAt: number
+  lastStructured: StructuredContext | null
+  pendingActionHistory: Map<string, number>
+}
+
 // ── State ────────────────────────────────────────────────────────────────────
 
-let currentSessionPath: string | null = null
-let currentSessionId = 'unknown'
-let lastReadPosition = 0
-let pendingLineBuffer = ''
-let parsedMessageCount = 0
-let sectionNumber = 1
-let lastHandoffAt = 0
-let lastSummaryMessageCount = 0
+const agentWatchers = new Map<string, AgentWatcherState>()
 let shuttingDown = false
-let lastSessionSwitchAt = 0
-let lastStructured: StructuredContext | null = null
-
-// Pending action drift tracking (task #4)
-let pendingActionHistory: Map<string, number> = new Map()
 
 // ── Logging ──────────────────────────────────────────────────────────────────
 
-function log(message: string): void {
-  console.log(`${LOG_PREFIX}[${config.agentName}] ${message}`)
+function log(message: string, agentName?: string): void {
+  console.log(`${LOG_PREFIX}[${agentName ?? 'system'}] ${message}`)
 }
 
-function warn(message: string): void {
-  console.warn(`${LOG_PREFIX}[${config.agentName}] ${message}`)
+function warn(message: string, agentName?: string): void {
+  console.warn(`${LOG_PREFIX}[${agentName ?? 'system'}] ${message}`)
 }
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
@@ -86,13 +89,13 @@ function resolveActiveContextPath(): string | null {
 
 // ── Session file discovery ───────────────────────────────────────────────────
 
-async function findNewestSessionFile(): Promise<string | null> {
-  const sessionsDir = path.join(config.agentsDir, config.agentName, 'sessions')
+async function findNewestSessionFile(agentName: string): Promise<string | null> {
+  const sessionsDir = path.join(config.agentsDir, agentName, 'sessions')
   let files: string[] = []
   try {
     files = await fsp.readdir(sessionsDir)
   } catch (error) {
-    warn(`unable to read sessions dir ${sessionsDir}: ${String(error)}`)
+    warn(`unable to read sessions dir ${sessionsDir}: ${String(error)}`, agentName)
     return null
   }
 
@@ -181,32 +184,32 @@ async function ensureTranscriptDir(): Promise<void> {
   await fsp.mkdir(path.dirname(config.handoffPath), { recursive: true })
 }
 
-async function appendTranscript(entries: string[]): Promise<void> {
+async function appendTranscript(entries: string[], state: AgentWatcherState): Promise<void> {
   if (entries.length === 0) return
   for (const _entry of entries) {
-    parsedMessageCount += 1
-    if (parsedMessageCount > 1 && (parsedMessageCount - lastSummaryMessageCount) >= config.summaryEveryN) {
-      lastSummaryMessageCount = parsedMessageCount
-      setImmediate(() => triggerHandoffDump(0, 'message-count').catch(() => {}))
+    state.parsedMessageCount += 1
+    if (state.parsedMessageCount > 1 && (state.parsedMessageCount - state.lastSummaryMessageCount) >= config.summaryEveryN) {
+      state.lastSummaryMessageCount = state.parsedMessageCount
+      setImmediate(() => triggerHandoffDump(0, state, 'message-count').catch(() => {}))
     }
   }
-  log(`new messages parsed: ${entries.length}`)
+  log(`new messages parsed: ${entries.length}`, state.agentName)
 }
 
-async function processSessionGrowth(filePath: string, size: number): Promise<void> {
-  if (size < lastReadPosition) { lastReadPosition = 0; pendingLineBuffer = '' }
-  const chunk = await readIncrementalChunk(filePath, lastReadPosition, size)
-  lastReadPosition = size
+async function processSessionGrowth(filePath: string, size: number, state: AgentWatcherState): Promise<void> {
+  if (size < state.lastReadPosition) { state.lastReadPosition = 0; state.pendingLineBuffer = '' }
+  const chunk = await readIncrementalChunk(filePath, state.lastReadPosition, size)
+  state.lastReadPosition = size
   if (!chunk) return
-  const combined = pendingLineBuffer + chunk
+  const combined = state.pendingLineBuffer + chunk
   const lines = combined.split(/\r?\n/)
-  pendingLineBuffer = lines.pop() ?? ''
+  state.pendingLineBuffer = lines.pop() ?? ''
   const parsed: string[] = []
   for (const line of lines) {
     const formatted = parseTranscriptLine(line)
     if (formatted) parsed.push(formatted)
   }
-  await appendTranscript(parsed)
+  await appendTranscript(parsed, state)
 }
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -307,7 +310,10 @@ async function readLastJsonlMessages(jsonlPath: string, maxMessages = 150): Prom
 
 // ── Active context JSON writing ──────────────────────────────────────────────
 
-async function writeActiveContext(structured: StructuredContext | null, finalSnapshot = false): Promise<void> {
+async function writeActiveContext(structured: StructuredContext | null, state: AgentWatcherState, finalSnapshot = false): Promise<void> {
+  // Only write active-context.json for the primary agent
+  if (state.agentName !== config.agentName) return
+
   const contextPath = resolveActiveContextPath()
   if (!contextPath) return
 
@@ -320,7 +326,7 @@ async function writeActiveContext(structured: StructuredContext | null, finalSna
     activeAgents: structured?.activeAgents ?? [],
     domain: structured?.domain ?? 'general',
     _autoUpdated: new Date().toISOString(),
-    _sessionId: currentSessionId,
+    _sessionId: state.currentSessionId,
   }
 
   if (finalSnapshot) {
@@ -329,45 +335,45 @@ async function writeActiveContext(structured: StructuredContext | null, finalSna
 
   await fsp.mkdir(path.dirname(contextPath), { recursive: true })
   await fsp.writeFile(contextPath, JSON.stringify(context, null, 2), 'utf8')
-  log(`active-context.json written${finalSnapshot ? ' (final snapshot)' : ''}: ${contextPath}`)
+  log(`active-context.json written${finalSnapshot ? ' (final snapshot)' : ''}: ${contextPath}`, state.agentName)
 }
 
-// ── Pending action drift detection (#4) ──────────────────────────────────────
+// ── Pending action drift detection ───────────────────────────────────────────
 
-function trackPendingActionDrift(structured: StructuredContext | null): void {
+function trackPendingActionDrift(structured: StructuredContext | null, state: AgentWatcherState): void {
   if (!structured?.pendingActions?.length) return
 
   const currentActions = new Set(structured.pendingActions)
   const newHistory = new Map<string, number>()
 
   for (const action of currentActions) {
-    const prev = pendingActionHistory.get(action) ?? 0
+    const prev = state.pendingActionHistory.get(action) ?? 0
     const count = prev + 1
     newHistory.set(action, count)
     if (count >= 3) {
-      warn(`stale pending action: "${action}" unchanged for ${count} handoffs`)
+      warn(`stale pending action: "${action}" unchanged for ${count} handoffs`, state.agentName)
     }
   }
 
-  pendingActionHistory = newHistory
+  state.pendingActionHistory = newHistory
 }
 
 // ── Handoff dump ─────────────────────────────────────────────────────────────
 
-async function triggerHandoffDump(triggerSizeMb: number, triggerReason = 'file-size'): Promise<void> {
+async function triggerHandoffDump(triggerSizeMb: number, state: AgentWatcherState, triggerReason = 'file-size'): Promise<void> {
   let condensedTranscript = ''
-  if (currentSessionPath) {
-    condensedTranscript = await readLastJsonlMessages(currentSessionPath, 150)
-    if (condensedTranscript) log('handoff: using jsonl as source (' + condensedTranscript.length + ' chars)')
+  if (state.currentSessionPath) {
+    condensedTranscript = await readLastJsonlMessages(state.currentSessionPath, 150)
+    if (condensedTranscript) log('handoff: using jsonl as source (' + condensedTranscript.length + ' chars)', state.agentName)
   }
   if (!condensedTranscript) {
-    warn('handoff trigger skipped: no transcript available')
+    warn('handoff trigger skipped: no transcript available', state.agentName)
     return
   }
 
-  // Task-aware summarization prompt with domain detection (#8)
+  // Task-aware summarization prompt with domain detection
   const prompt = [
-    `You are summarizing an ongoing AI assistant session for agent "${config.agentName}" for context handoff.`,
+    `You are summarizing an ongoing AI assistant session for agent "${state.agentName}" for context handoff.`,
     'Read the transcript below and extract:',
     '1. Current task/project (1 sentence \u2014 what is being worked on RIGHT NOW)',
     '2. Key decisions made this session (bullet list, max 15, most recent first)',
@@ -397,89 +403,91 @@ async function triggerHandoffDump(triggerSizeMb: number, triggerReason = 'file-s
     summary = llmResult.narrative
     structured = llmResult.structured
   } else {
-    warn('handoff summary unavailable; writing raw transcript tail as fallback')
+    warn('handoff summary unavailable; writing raw transcript tail as fallback', state.agentName)
     const tail = condensedTranscript.split('\n').slice(-150).join('\n')
     summary = `## Raw Transcript Tail (last 150 lines \u2014 LLM unavailable)\n\n${tail}`
   }
 
   const now = new Date()
 
-  // Write handoff file if configured
-  if (config.handoffPath) {
+  // Write handoff file if configured (primary agent only)
+  if (config.handoffPath && state.agentName === config.agentName) {
     const out = [
-      `# Live Session Handoff \u2014 ${config.agentName}`,
+      `# Live Session Handoff \u2014 ${state.agentName}`,
       `_Updated: ${formatTimestamp(now)}_`,
-      `_Trigger: ${triggerReason === 'file-size' ? `file size ${triggerSizeMb.toFixed(2)}mb` : `every ${config.summaryEveryN} messages (msg #${parsedMessageCount})`}_`,
+      `_Trigger: ${triggerReason === 'file-size' ? `file size ${triggerSizeMb.toFixed(2)}mb` : `every ${config.summaryEveryN} messages (msg #${state.parsedMessageCount})`}_`,
       '',
       summary, '',
     ].join('\n')
     await fsp.writeFile(config.handoffPath, out, 'utf8')
-    log(`handoff dump written (${triggerReason}): ${config.handoffPath}`)
+    log(`handoff dump written (${triggerReason}): ${config.handoffPath}`, state.agentName)
   }
 
-  // Write active-context.json (#2)
-  lastStructured = structured
-  await writeActiveContext(structured)
+  // Write active-context.json (primary agent only — checked inside)
+  state.lastStructured = structured
+  await writeActiveContext(structured, state)
 
-  // Track pending action drift (#4)
-  trackPendingActionDrift(structured)
+  // Track pending action drift
+  trackPendingActionDrift(structured, state)
 
-  lastHandoffAt = Date.now()
+  state.lastHandoffAt = Date.now()
 
   // Post summary to Discord webhook if configured
   if (config.discordWebhookUrl) {
     try {
       const truncated = summary.length > 1800 ? summary.slice(0, 1800) + '\n\u2026*(truncated)*' : summary
-      const msg = `**Session Handoff \u2014 ${config.agentName}**\n_${formatTimestamp(now)} \u00b7 ${triggerReason}_\n\n${truncated}`
+      const msg = `**Session Handoff \u2014 ${state.agentName}**\n_${formatTimestamp(now)} \u00b7 ${triggerReason}_\n\n${truncated}`
       await httpPostJson(config.discordWebhookUrl, { content: msg }, {})
-      log('handoff posted to Discord')
+      log('handoff posted to Discord', state.agentName)
     } catch (e: any) {
-      warn(`Discord post failed: ${e.message}`)
+      warn(`Discord post failed: ${e.message}`, state.agentName)
     }
   }
 
   // Push session summary to Locigram under hierarchical locus
   try {
-    const sessionLocus = `agent/${config.agentName}/session/${currentSessionId}`
-    await pushToLocigram(config.agentName, currentSessionId, summary, now, sessionLocus)
-    log('handoff pushed to Locigram (session)')
+    const sessionLocus = `agent/${state.agentName}/session/${state.currentSessionId}`
+    await pushToLocigram(state.agentName, state.currentSessionId, summary, now, sessionLocus)
+    log('handoff pushed to Locigram (session)', state.agentName)
   } catch (e: any) {
-    warn(`Locigram push error (session): ${e.message}`)
+    warn(`Locigram push error (session): ${e.message}`, state.agentName)
   }
 
   // Push active context (structured JSON) under context locus
   if (structured) {
     try {
-      const contextLocus = `agent/${config.agentName}/context`
+      const contextLocus = `agent/${state.agentName}/context`
       const contextPayload = JSON.stringify({
         ...structured,
         _autoUpdated: now.toISOString(),
-        _sessionId: currentSessionId,
+        _sessionId: state.currentSessionId,
         _agentType: config.agentType,
       })
-      await pushToLocigram(config.agentName, currentSessionId, contextPayload, now, contextLocus)
-      log('handoff pushed to Locigram (context)')
+      await pushToLocigram(state.agentName, state.currentSessionId, contextPayload, now, contextLocus)
+      log('handoff pushed to Locigram (context)', state.agentName)
     } catch (e: any) {
-      warn(`Locigram push error (context): ${e.message}`)
+      warn(`Locigram push error (context): ${e.message}`, state.agentName)
     }
   }
 }
 
 // ── Size-based handoff trigger ───────────────────────────────────────────────
 
-async function maybeTriggerHandoff(sessionSizeBytes: number): Promise<void> {
+async function maybeTriggerHandoff(sessionSizeBytes: number, state: AgentWatcherState): Promise<void> {
   const thresholdBytes = config.compactionMb * 1024 * 1024
   if (sessionSizeBytes < thresholdBytes) return
-  const elapsed = Date.now() - lastHandoffAt
+  const elapsed = Date.now() - state.lastHandoffAt
   if (elapsed < config.dumpCooldownMs) return
   const sizeMb = sessionSizeBytes / (1024 * 1024)
-  log(`handoff trigger: file size ${sizeMb.toFixed(2)}mb`)
-  await triggerHandoffDump(sizeMb)
+  log(`handoff trigger: file size ${sizeMb.toFixed(2)}mb`, state.agentName)
+  await triggerHandoffDump(sizeMb, state)
 }
 
 // ── Handoff archival on session switch ────────────────────────────────────────
 
-async function archiveHandoffOnSessionSwitch(): Promise<void> {
+async function archiveHandoffOnSessionSwitch(state: AgentWatcherState): Promise<void> {
+  // Only archive for primary agent (handoff file is shared)
+  if (state.agentName !== config.agentName) return
   if (!config.handoffPath) return
   try {
     const existing = await fsp.readFile(config.handoffPath, 'utf8')
@@ -488,7 +496,7 @@ async function archiveHandoffOnSessionSwitch(): Promise<void> {
     const ts = formatTimestamp(now).replace(/[/:]/g, '-').replace(/\s/g, '_')
     const archivePath = config.handoffPath.replace('.md', `-archived-${ts}.md`)
     await fsp.writeFile(archivePath, existing, 'utf8')
-    log(`archived pre-compaction handoff to ${archivePath}`)
+    log(`archived pre-compaction handoff to ${archivePath}`, state.agentName)
     // Also append to today's memory flush file if workspace configured
     if (config.workspaceRoot) {
       const memoryDir = path.join(config.workspaceRoot, 'memory')
@@ -497,10 +505,10 @@ async function archiveHandoffOnSessionSwitch(): Promise<void> {
       const memoryPath = path.join(memoryDir, `${dateStamp}.md`)
       const separator = `\n\n---\n\n# Session Monitor Handoff Archive \u2014 ${formatTimestamp(now)}\n\n`
       await fsp.appendFile(memoryPath, separator + existing, 'utf8')
-      log(`appended handoff to memory flush file ${memoryPath}`)
+      log(`appended handoff to memory flush file ${memoryPath}`, state.agentName)
     }
   } catch (e: any) {
-    if (e.code !== 'ENOENT') warn(`failed to archive handoff: ${e.message}`)
+    if (e.code !== 'ENOENT') warn(`failed to archive handoff: ${e.message}`, state.agentName)
   }
 }
 
@@ -509,22 +517,22 @@ async function archiveHandoffOnSessionSwitch(): Promise<void> {
 function sanitizeProjectName(raw: string): string {
   const firstToken = raw.split(/[\r\n]/)[0] ?? ''
   const cleaned = firstToken.replace(/[^A-Za-z0-9-]/g, '').replace(/^-+/, '').replace(/-+$/, '')
-  return cleaned || 'Unknown-Project'
+  return (cleaned || 'Unknown-Project').slice(0, 60)
 }
 
-async function detectProject(): Promise<void> {
+async function detectProject(state: AgentWatcherState): Promise<void> {
   if (!config.workspaceRoot || !config.obsidianVault) return
-  if (!currentSessionPath) return
+  if (!state.currentSessionPath) return
   // Read recent transcript for project detection
-  const content = await readLastJsonlMessages(currentSessionPath, 30)
-  if (!content) { warn('project detection: transcript empty, skipping'); return }
+  const content = await readLastJsonlMessages(state.currentSessionPath, 30)
+  if (!content) { warn('project detection: transcript empty, skipping', state.agentName); return }
   const prompt = [
     'Based on this conversation snippet, what project/feature is being worked on?',
-    'Reply with just a short project name (2-4 words, no spaces, use hyphens).',
+    'Reply with ONLY a project name, 2-4 hyphenated words, no explanation, no punctuation. Example: locigram-session-monitor',
     `CONVERSATION: ${content}`,
   ].join('\n')
   const llmResult = await callLlm(prompt)
-  if (!llmResult) { warn('project detection: LLM unavailable'); return }
+  if (!llmResult) { warn('project detection: LLM unavailable', state.agentName); return }
   const projectName = sanitizeProjectName(llmResult.narrative)
   if (!projectName) return
   // Create project stub if Obsidian vault configured
@@ -534,10 +542,10 @@ async function detectProject(): Promise<void> {
   await fsp.mkdir(projectsDir, { recursive: true })
   const body = `# ${projectName}\n\n## Current State\n- Newly detected by session-monitor\n`
   await fsp.writeFile(targetPath, body, 'utf8')
-  log(`project detection: created stub ${targetPath}`)
+  log(`project detection: created stub ${targetPath}`, state.agentName)
 }
 
-// ── Startup reconciliation (#3) ──────────────────────────────────────────────
+// ── Startup reconciliation ───────────────────────────────────────────────────
 
 async function startupReconciliation(): Promise<void> {
   const contextPath = resolveActiveContextPath()
@@ -563,7 +571,7 @@ async function startupReconciliation(): Promise<void> {
   }
 }
 
-// ── Multi-agent awareness (#6) ───────────────────────────────────────────────
+// ── Multi-agent awareness ────────────────────────────────────────────────────
 
 async function logAgentDirCount(): Promise<void> {
   try {
@@ -584,70 +592,70 @@ async function logAgentDirCount(): Promise<void> {
 
 // ── Heartbeat ────────────────────────────────────────────────────────────────
 
-async function sendHeartbeat(): Promise<void> {
+async function sendHeartbeat(state: AgentWatcherState): Promise<void> {
   try {
     const res = await httpPostJson(
-      `${config.locigramUrl}/api/agents/${encodeURIComponent(config.agentName)}/heartbeat`,
+      `${config.locigramUrl}/api/agents/${encodeURIComponent(state.agentName)}/heartbeat`,
       { agentType: config.agentType, status: 'alive' },
       { 'Authorization': `Bearer ${config.apiToken}` },
     )
     if (res.status >= 200 && res.status < 300) {
-      log('heartbeat sent')
+      log('heartbeat sent', state.agentName)
     } else {
-      warn(`heartbeat failed: ${res.status}`)
+      warn(`heartbeat failed: ${res.status}`, state.agentName)
     }
   } catch (e: any) {
-    warn(`heartbeat error: ${e.message}`)
+    warn(`heartbeat error: ${e.message}`, state.agentName)
   }
 }
 
 // ── Session attachment ───────────────────────────────────────────────────────
 
-async function attachSessionFile(sessionPath: string): Promise<void> {
-  // Session continuity awareness (#5)
+async function attachSessionFile(sessionPath: string, state: AgentWatcherState): Promise<void> {
+  // Session continuity awareness
   const now = Date.now()
-  const timeSinceLastSwitch = now - lastSessionSwitchAt
+  const timeSinceLastSwitch = now - state.lastSessionSwitchAt
   const CONTINUITY_WINDOW_MS = 15 * 60 * 1000  // 15 minutes
 
-  if (currentSessionPath && currentSessionPath !== sessionPath) {
-    if (lastSessionSwitchAt > 0 && timeSinceLastSwitch < CONTINUITY_WINDOW_MS) {
-      log('session continuity: resuming within 15min window, preserving context')
+  if (state.currentSessionPath && state.currentSessionPath !== sessionPath) {
+    if (state.lastSessionSwitchAt > 0 && timeSinceLastSwitch < CONTINUITY_WINDOW_MS) {
+      log('session continuity: resuming within 15min window, preserving context', state.agentName)
       // Skip archive/reset — just update the session path
     } else {
-      await archiveHandoffOnSessionSwitch()
+      await archiveHandoffOnSessionSwitch(state)
     }
   }
 
-  if (currentSessionPath) fs.unwatchFile(currentSessionPath)
-  currentSessionPath = sessionPath
-  currentSessionId = deriveSessionId(sessionPath)
-  lastReadPosition = 0
-  pendingLineBuffer = ''
-  lastSessionSwitchAt = now
-  log(`session file found: ${sessionPath}`)
+  if (state.currentSessionPath) fs.unwatchFile(state.currentSessionPath)
+  state.currentSessionPath = sessionPath
+  state.currentSessionId = deriveSessionId(sessionPath)
+  state.lastReadPosition = 0
+  state.pendingLineBuffer = ''
+  state.lastSessionSwitchAt = now
+  log(`session file found: ${sessionPath}`, state.agentName)
   await ensureTranscriptDir()
   const initialStat = await fsp.stat(sessionPath)
-  lastReadPosition = initialStat.size
-  lastSummaryMessageCount = 0
-  parsedMessageCount = 0
-  sectionNumber = 1
-  log(`watching session; skipping ${(initialStat.size / 1024 / 1024).toFixed(1)}mb of existing history`)
+  state.lastReadPosition = initialStat.size
+  state.lastSummaryMessageCount = 0
+  state.parsedMessageCount = 0
+  state.sectionNumber = 1
+  log(`watching session; skipping ${(initialStat.size / 1024 / 1024).toFixed(1)}mb of existing history`, state.agentName)
   fs.watchFile(sessionPath, { interval: config.watchIntervalMs }, async (curr) => {
     if (shuttingDown) return
     try {
-      await processSessionGrowth(sessionPath, curr.size)
-      await maybeTriggerHandoff(curr.size)
-    } catch (error) { warn(`watch error: ${String(error)}`) }
+      await processSessionGrowth(sessionPath, curr.size, state)
+      await maybeTriggerHandoff(curr.size, state)
+    } catch (error) { warn(`watch error: ${String(error)}`, state.agentName) }
   })
 }
 
 // ── Session scanning ─────────────────────────────────────────────────────────
 
-async function scanAndMaybeSwitchSession(): Promise<void> {
-  const newest = await findNewestSessionFile()
-  if (!newest || newest === currentSessionPath) return
-  try { await attachSessionFile(newest) }
-  catch (error) { warn(`failed to attach session file ${newest}: ${String(error)}`) }
+async function scanAndMaybeSwitchSession(state: AgentWatcherState): Promise<void> {
+  const newest = await findNewestSessionFile(state.agentName)
+  if (!newest || newest === state.currentSessionPath) return
+  try { await attachSessionFile(newest, state) }
+  catch (error) { warn(`failed to attach session file ${newest}: ${String(error)}`, state.agentName) }
 }
 
 // ── Shutdown ─────────────────────────────────────────────────────────────────
@@ -656,20 +664,23 @@ function setupShutdownHandlers(sessionTimer: NodeJS.Timeout, projectTimer: NodeJ
   const onSignal = async (signal: NodeJS.Signals): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
-    log(`received ${signal}; final handoff dump...`)
+    log(`received ${signal}; final handoff dump for all agents...`)
     clearInterval(sessionTimer)
     if (projectTimer) clearInterval(projectTimer)
     if (heartbeatTimer) clearInterval(heartbeatTimer)
-    if (currentSessionPath) fs.unwatchFile(currentSessionPath)
-    try {
-      const sizeMb = currentSessionPath ? (await fsp.stat(currentSessionPath)).size / (1024 * 1024) : 0
-      await triggerHandoffDump(sizeMb, 'shutdown')
-    } catch (error) { warn(`shutdown handoff failed: ${String(error)}`) }
 
-    // End-of-session final snapshot (#9)
-    try {
-      await writeActiveContext(lastStructured, true)
-    } catch (error) { warn(`final snapshot write failed: ${String(error)}`) }
+    for (const state of agentWatchers.values()) {
+      if (state.currentSessionPath) fs.unwatchFile(state.currentSessionPath)
+      try {
+        const sizeMb = state.currentSessionPath ? (await fsp.stat(state.currentSessionPath)).size / (1024 * 1024) : 0
+        await triggerHandoffDump(sizeMb, state, 'shutdown')
+      } catch (error) { warn(`shutdown handoff failed: ${String(error)}`, state.agentName) }
+
+      // End-of-session final snapshot (active-context.json — primary only, checked inside)
+      try {
+        await writeActiveContext(state.lastStructured, state, true)
+      } catch (error) { warn(`final snapshot write failed: ${String(error)}`, state.agentName) }
+    }
 
     process.exit(0)
   }
@@ -680,10 +691,8 @@ function setupShutdownHandlers(sessionTimer: NodeJS.Timeout, projectTimer: NodeJ
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 export function startDaemon(): void {
-  const sessionsDir = path.join(config.agentsDir, config.agentName, 'sessions')
   log('daemon started')
-  log(`agent: ${config.agentName}`)
-  log(`sessions dir: ${sessionsDir}`)
+  log(`watching agents: ${config.watchAgents.join(', ')}`)
   log(`summary every ${config.summaryEveryN} messages`)
   log(`compaction threshold: ${config.compactionMb}mb`)
   if (config.handoffPath) log(`handoff path: ${config.handoffPath}`)
@@ -692,24 +701,64 @@ export function startDaemon(): void {
   if (config.discordWebhookUrl) log('discord: webhook configured')
   log(`locigram: ${config.locigramUrl}`)
 
-  // Multi-agent awareness (#6)
+  // Multi-agent awareness
   void logAgentDirCount()
 
-  // Startup reconciliation (#3)
+  // Startup reconciliation (primary agent only)
   void startupReconciliation()
 
-  void scanAndMaybeSwitchSession()
-  const sessionTimer = setInterval(() => { void scanAndMaybeSwitchSession() }, config.sessionScanMs)
+  // Initialize watcher state for each agent
+  for (const agentName of config.watchAgents) {
+    const state: AgentWatcherState = {
+      agentName,
+      currentSessionPath: null,
+      currentSessionId: 'unknown',
+      lastReadPosition: 0,
+      pendingLineBuffer: '',
+      parsedMessageCount: 0,
+      sectionNumber: 1,
+      lastHandoffAt: 0,
+      lastSummaryMessageCount: 0,
+      lastSessionSwitchAt: 0,
+      lastStructured: null,
+      pendingActionHistory: new Map(),
+    }
+    agentWatchers.set(agentName, state)
 
-  let projectTimer: NodeJS.Timeout | null = null
-  if (config.workspaceRoot && config.obsidianVault) {
-    projectTimer = setInterval(() => { void detectProject() }, config.projectDetectMs)
+    const sessionsDir = path.join(config.agentsDir, agentName, 'sessions')
+    log(`agent: ${agentName}`, agentName)
+    log(`sessions dir: ${sessionsDir}`, agentName)
+
+    void scanAndMaybeSwitchSession(state)
   }
 
-  // Heartbeat every 10 minutes
+  // Session timer scans all agents
+  const sessionTimer = setInterval(() => {
+    for (const state of agentWatchers.values()) {
+      void scanAndMaybeSwitchSession(state)
+    }
+  }, config.sessionScanMs)
+
+  // Project detection for all agents
+  let projectTimer: NodeJS.Timeout | null = null
+  if (config.workspaceRoot && config.obsidianVault) {
+    projectTimer = setInterval(() => {
+      for (const state of agentWatchers.values()) {
+        void detectProject(state)
+      }
+    }, config.projectDetectMs)
+  }
+
+  // Heartbeat for each agent every 10 minutes
   const HEARTBEAT_INTERVAL_MS = 10 * 60_000
-  void sendHeartbeat()
-  const heartbeatTimer = setInterval(() => { void sendHeartbeat() }, HEARTBEAT_INTERVAL_MS)
+  for (const state of agentWatchers.values()) {
+    void sendHeartbeat(state)
+  }
+  const heartbeatTimer = setInterval(() => {
+    for (const state of agentWatchers.values()) {
+      void sendHeartbeat(state)
+    }
+  }, HEARTBEAT_INTERVAL_MS)
 
   setupShutdownHandlers(sessionTimer, projectTimer, heartbeatTimer)
 }
