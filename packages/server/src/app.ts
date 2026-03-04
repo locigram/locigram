@@ -17,7 +17,7 @@ import { peopleRoute } from './routes/people'
 import { timelineRoute } from './routes/timeline'
 import { feedbackRoute } from './routes/feedback'
 import { bootstrapRoute } from './routes/bootstrap'
-import { buildTools } from './mcp/tools'
+import { createMcpHandler } from './mcp/transport'
 import { autoRegisterConnectors } from './connectors'
 
 export interface AppConfig {
@@ -122,12 +122,15 @@ export function createApp(config: AppConfig) {
   app.route('/api/webhook',   buildWebhookRoute())
   app.route('/api/bootstrap', bootstrapRoute)
 
-  // ── MCP endpoint ───────────────────────────────────────────────────────────
+  // ── MCP endpoint (exempt from auth middleware — bearer check inline) ──────
+  let mcpHandler: ((req: Request) => Promise<Response>) | null = null
+
   app.all('/mcp/*', async (c) => {
-    const palace = c.get('palace')
-    const tools  = buildTools(db, palace)
-    // TODO: wire @hono/mcp transport
-    return c.json({ palace: palace.id, tools: Object.keys(tools) })
+    if (!mcpHandler) {
+      const palace = c.get('palace') as import('@locigram/db').Palace
+      mcpHandler = createMcpHandler(db, palace, vectorClient, collectionName, config.apiToken)
+    }
+    return mcpHandler(c.req.raw)
   })
 
   // Cleanup on shutdown
