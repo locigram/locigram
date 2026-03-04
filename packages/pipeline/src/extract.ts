@@ -61,7 +61,8 @@ export async function extractFromRaw(
         model: role.model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user',   content: raw.content },
+          // /no_think disables chain-of-thought on Qwen3 models — faster, fewer tokens
+          { role: 'user',   content: `${raw.content}\n/no_think` },
         ],
         temperature: 0.1,
       }),
