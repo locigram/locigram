@@ -29,8 +29,13 @@ switch (cmd) {
     console.log(`[status] platform: ${process.platform}`)
     console.log(`[status] LOCIGRAM_URL: ${config.locigramUrl || '(not set)'}`)
     console.log(`[status] LOCIGRAM_API_TOKEN: ${config.apiToken ? '***' : '(not set)'}`)
+    console.log(`[status] OPENCLAW_AGENT_NAME: ${config.agentName}`)
     console.log(`[status] OPENCLAW_AGENTS_DIR: ${config.agentsDir}`)
-    console.log(`[status] OPENCLAW_AGENT_NAMES: ${config.agentNames.join(', ')}`)
+    console.log(`[status] summary every: ${config.summaryEveryN} messages`)
+    console.log(`[status] compaction threshold: ${config.compactionMb}mb`)
+    console.log(`[status] handoff path: ${config.handoffPath ?? '(not set)'}`)
+    console.log(`[status] workspace root: ${config.workspaceRoot ?? '(not set)'}`)
+    console.log(`[status] discord: ${config.discordToken ? 'configured' : '(not set)'}`)
 
     // Test connectivity
     if (config.locigramUrl) {
@@ -60,13 +65,26 @@ Usage:
   locigram-session-monitor uninstall   Remove system service
   locigram-session-monitor status      Check config and connectivity
 
-Environment variables:
-  LOCIGRAM_URL                Locigram server URL (required)
-  LOCIGRAM_API_TOKEN          API token (required)
-  OPENCLAW_AGENTS_DIR         Path to OpenClaw agents directory (default: ~/.openclaw/agents)
-  OPENCLAW_AGENT_NAMES        Comma-separated agent names (default: main)
-  LOCIGRAM_PUSH_EVERY_N       Push every N messages (default: 5)
-  LOCIGRAM_MAX_TRANSCRIPT_CHARS  Max transcript buffer size (default: 8000)
+Required environment variables:
+  LOCIGRAM_URL                   Locigram server URL
+  LOCIGRAM_API_TOKEN             API token
+
+Agent configuration:
+  OPENCLAW_AGENT_NAME            Agent name (default: main)
+  OPENCLAW_AGENTS_DIR            Path to agents directory (default: ~/.openclaw/agents)
+
+Tuning:
+  LOCIGRAM_SUMMARY_EVERY_N       Trigger handoff every N messages (default: 5)
+  LOCIGRAM_COMPACTION_MB          File size threshold for handoff (default: 8)
+
+Optional — handoff file:
+  LOCIGRAM_HANDOFF_PATH           Write handoff summary to this file
+  OPENCLAW_WORKSPACE_ROOT         Workspace root for memory archival
+  OBSIDIAN_VAULT                  Obsidian vault path for project detection
+
+Optional — Discord:
+  DISCORD_BOT_TOKEN               Discord bot token for posting summaries
+  SESSION_MONITOR_DISCORD_CHANNEL Discord channel ID
 `)
     break
 }

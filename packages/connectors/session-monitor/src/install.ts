@@ -14,6 +14,25 @@ export function installMacOS(): void {
     fs.mkdirSync(plistDir, { recursive: true })
   }
 
+  // Build optional env vars — only include if set
+  const optionalEnvs: string[] = []
+  if (config.handoffPath) {
+    optionalEnvs.push(`    <key>LOCIGRAM_HANDOFF_PATH</key><string>${config.handoffPath}</string>`)
+  }
+  if (config.workspaceRoot) {
+    optionalEnvs.push(`    <key>OPENCLAW_WORKSPACE_ROOT</key><string>${config.workspaceRoot}</string>`)
+  }
+  if (config.discordToken) {
+    optionalEnvs.push(`    <key>DISCORD_BOT_TOKEN</key><string>${config.discordToken}</string>`)
+  }
+  if (config.discordChannel) {
+    optionalEnvs.push(`    <key>SESSION_MONITOR_DISCORD_CHANNEL</key><string>${config.discordChannel}</string>`)
+  }
+  if (config.obsidianVault) {
+    optionalEnvs.push(`    <key>OBSIDIAN_VAULT</key><string>${config.obsidianVault}</string>`)
+  }
+  const optionalBlock = optionalEnvs.length > 0 ? '\n' + optionalEnvs.join('\n') : ''
+
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -28,8 +47,8 @@ export function installMacOS(): void {
   <dict>
     <key>LOCIGRAM_URL</key><string>${config.locigramUrl}</string>
     <key>LOCIGRAM_API_TOKEN</key><string>${config.apiToken}</string>
-    <key>OPENCLAW_AGENTS_DIR</key><string>${config.agentsDir}</string>
-    <key>OPENCLAW_AGENT_NAMES</key><string>${config.agentNames.join(',')}</string>
+    <key>OPENCLAW_AGENT_NAME</key><string>${config.agentName}</string>
+    <key>OPENCLAW_AGENTS_DIR</key><string>${config.agentsDir}</string>${optionalBlock}
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -64,6 +83,15 @@ export function installLinux(): void {
     fs.mkdirSync(unitDir, { recursive: true })
   }
 
+  // Build optional env lines
+  const optionalEnvs: string[] = []
+  if (config.handoffPath) optionalEnvs.push(`Environment=LOCIGRAM_HANDOFF_PATH=${config.handoffPath}`)
+  if (config.workspaceRoot) optionalEnvs.push(`Environment=OPENCLAW_WORKSPACE_ROOT=${config.workspaceRoot}`)
+  if (config.discordToken) optionalEnvs.push(`Environment=DISCORD_BOT_TOKEN=${config.discordToken}`)
+  if (config.discordChannel) optionalEnvs.push(`Environment=SESSION_MONITOR_DISCORD_CHANNEL=${config.discordChannel}`)
+  if (config.obsidianVault) optionalEnvs.push(`Environment=OBSIDIAN_VAULT=${config.obsidianVault}`)
+  const optionalBlock = optionalEnvs.length > 0 ? '\n' + optionalEnvs.join('\n') : ''
+
   const unit = `[Unit]
 Description=Locigram Session Monitor
 After=network.target
@@ -73,8 +101,8 @@ Type=simple
 ExecStart=/usr/local/bin/locigram-session-monitor start
 Environment=LOCIGRAM_URL=${config.locigramUrl}
 Environment=LOCIGRAM_API_TOKEN=${config.apiToken}
-Environment=OPENCLAW_AGENTS_DIR=${config.agentsDir}
-Environment=OPENCLAW_AGENT_NAMES=${config.agentNames.join(',')}
+Environment=OPENCLAW_AGENT_NAME=${config.agentName}
+Environment=OPENCLAW_AGENTS_DIR=${config.agentsDir}${optionalBlock}
 Restart=on-failure
 RestartSec=10
 

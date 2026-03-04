@@ -21,28 +21,27 @@ function httpPostJson(url: string, body: string, token: string): Promise<{ statu
     })
 
     req.on('error', reject)
+    req.setTimeout(20_000, () => { req.destroy(new Error('timeout')) })
     req.write(body)
     req.end()
   })
 }
 
-export async function pushToLocigram(agentName: string, sessionId: string, transcript: string): Promise<void> {
+export async function pushToLocigram(agentName: string, sessionId: string, transcript: string, occurredAt?: Date): Promise<void> {
   const url = `${config.locigramUrl}/api/sessions/ingest`
   const body = JSON.stringify({
     agentName,
     sessionId,
     transcript,
-    occurredAt: new Date().toISOString(),
+    occurredAt: (occurredAt ?? new Date()).toISOString(),
   })
 
-  try {
-    const res = await httpPostJson(url, body, config.apiToken)
-    if (res.status >= 200 && res.status < 300) {
-      console.log(`[session-monitor] pushed ${agentName}/${sessionId} → ${res.body}`)
-    } else {
-      console.error(`[session-monitor] push failed (${res.status}): ${res.body}`)
-    }
-  } catch (err) {
-    console.error(`[session-monitor] push error:`, err instanceof Error ? err.message : err)
+  const res = await httpPostJson(url, body, config.apiToken)
+  if (res.status >= 200 && res.status < 300) {
+    let parsed: any = res.body
+    try { parsed = JSON.parse(res.body) } catch { /* keep raw */ }
+    console.log(`[session-monitor] locigram push: stored=${parsed?.stored ?? '?'} skipped=${parsed?.skipped ?? '?'}`)
+  } else {
+    throw new Error(`push failed (${res.status}): ${res.body}`)
   }
 }

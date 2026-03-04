@@ -2,17 +2,36 @@ import * as os from 'os'
 import * as path from 'path'
 
 function expandHome(p: string): string {
-  if (p.startsWith('~')) return path.join(os.homedir(), p.slice(1))
+  if (p === '~') return os.homedir()
+  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2))
   return p
 }
 
 export const config = {
-  locigramUrl:         process.env.LOCIGRAM_URL ?? '',
-  apiToken:            process.env.LOCIGRAM_API_TOKEN ?? '',
-  agentsDir:           process.env.OPENCLAW_AGENTS_DIR ?? expandHome('~/.openclaw/agents'),
-  agentNames:          (process.env.OPENCLAW_AGENT_NAMES ?? 'main').split(',').map(s => s.trim()),
-  pushEveryN:          Number(process.env.LOCIGRAM_PUSH_EVERY_N ?? '5'),
-  maxTranscriptChars:  Number(process.env.LOCIGRAM_MAX_TRANSCRIPT_CHARS ?? '8000'),
+  // Required
+  locigramUrl:      process.env.LOCIGRAM_URL ?? '',
+  apiToken:         process.env.LOCIGRAM_API_TOKEN ?? '',
+
+  // Agent
+  agentName:        process.env.OPENCLAW_AGENT_NAME ?? process.env.AGENT_NAME ?? 'main',
+  agentsDir:        process.env.OPENCLAW_AGENTS_DIR ?? expandHome('~/.openclaw/agents'),
+
+  // Tuning
+  summaryEveryN:    Number(process.env.LOCIGRAM_SUMMARY_EVERY_N ?? '5'),
+  compactionMb:     Number(process.env.LOCIGRAM_COMPACTION_MB ?? '8'),
+  watchIntervalMs:  2000,
+  sessionScanMs:    30_000,
+  dumpCooldownMs:   10 * 60_000,
+  projectDetectMs:  5 * 60_000,
+
+  // Optional — handoff file
+  handoffPath:      process.env.LOCIGRAM_HANDOFF_PATH ?? null as string | null,
+  workspaceRoot:    process.env.OPENCLAW_WORKSPACE_ROOT ?? null as string | null,
+  obsidianVault:    process.env.OBSIDIAN_VAULT ?? null as string | null,
+
+  // Optional — Discord
+  discordToken:     process.env.DISCORD_BOT_TOKEN ?? null as string | null,
+  discordChannel:   process.env.SESSION_MONITOR_DISCORD_CHANNEL ?? null as string | null,
 }
 
 export function validateConfig(): void {

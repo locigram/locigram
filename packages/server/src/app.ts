@@ -122,6 +122,42 @@ export function createApp(config: AppConfig) {
   app.route('/api/webhook',   buildWebhookRoute())
   app.route('/api/bootstrap', bootstrapRoute)
 
+  // ── Internal summarize endpoint (used by session-monitor daemon) ───────────
+  app.post('/api/internal/summarize', async (c) => {
+    const body = await c.req.json()
+    const { prompt, maxTokens } = body as { prompt?: string; maxTokens?: number }
+
+    if (!prompt) {
+      return c.json({ error: 'prompt is required' }, 400)
+    }
+
+    const { url, model, apiKey, noThink } = config.llm.summary
+    try {
+      const res = await fetch(`${url}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: noThink ? prompt + ' /no_think' : prompt }],
+          max_tokens: maxTokens ?? 800,
+        }),
+      })
+
+      const text = await res.text()
+      const parsed = JSON.parse(text)
+      const content = parsed.choices?.[0]?.message?.content ?? ''
+      const cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+
+      return c.json({ summary: cleaned })
+    } catch (err: any) {
+      console.error('[api/internal/summarize] LLM call failed:', err.message)
+      return c.json({ error: 'LLM call failed', detail: err.message }, 502)
+    }
+  })
+
   // ── Session monitor ingest endpoint ────────────────────────────────────────
   app.post('/api/sessions/ingest', async (c) => {
     const body = await c.req.json()
