@@ -88,8 +88,18 @@ export async function extractFromRaw(
 
     console.log('[pipeline] LLM content:', content)
 
-    // Strip markdown code fences if present
-    const cleanJson = content.replace(/```json\n?|```/g, '').trim()
+    // Strip markdown code fences + think tags if present
+    let cleanJson = content
+      .replace(/```json\n?|```/g, '')
+      .replace(/<think>[\s\S]*?<\/think>/g, '')
+      .trim()
+
+    // If there's surrounding text, grab the JSON object body
+    const start = cleanJson.indexOf('{')
+    const end = cleanJson.lastIndexOf('}')
+    if (start >= 0 && end > start) {
+      cleanJson = cleanJson.slice(start, end + 1)
+    }
 
     try {
       const parsed = ExtractionSchema.safeParse(JSON.parse(cleanJson))
