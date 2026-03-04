@@ -77,13 +77,22 @@ export async function extractFromRaw(
     const content = data?.choices?.[0]?.message?.content
     if (!content) return fallback(raw)
 
-    const parsed = ExtractionSchema.safeParse(JSON.parse(content))
-    if (!parsed.success) {
-      console.warn('[pipeline] extraction schema mismatch:', parsed.error.message)
-      return fallback(raw)
-    }
+    console.log('[pipeline] LLM content:', content)
 
-    return parsed.data
+    // Strip markdown code fences if present
+    const cleanJson = content.replace(/```json\n?|```/g, '').trim()
+
+    try {
+      const parsed = ExtractionSchema.safeParse(JSON.parse(cleanJson))
+      if (!parsed.success) {
+        console.warn('[pipeline] extraction schema mismatch:', parsed.error.message)
+        return fallback(raw)
+      }
+      return parsed.data
+    } catch (e) {
+      console.warn('[pipeline] JSON parse failed for content:', content)
+      throw e
+    }
   } catch (err) {
     console.warn('[pipeline] extraction failed:', err)
     return fallback(raw)
