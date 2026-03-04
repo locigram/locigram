@@ -225,7 +225,7 @@ spec:
       initContainers:
         - name: migrate
           image: ghcr.io/locigram/locigram:latest
-          command: ["/bin/sh", "-c", "node --import /opt/homebrew/lib/node_modules/tsx/dist/esm/index.mjs packages/db/src/migrate.ts"]
+          command: ["/bin/sh", "-c", "bun run packages/db/src/migrate.ts"]
           envFrom:
             - configMapRef:
                 name: locigram-config
