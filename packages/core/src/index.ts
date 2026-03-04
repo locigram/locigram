@@ -14,13 +14,25 @@ export type Locus =
 // ── Source Types ─────────────────────────────────────────────────────────────
 
 export type SourceType =
-  | 'email'
-  | 'chat'
-  | 'sms'
-  | 'llm-session'
-  | 'manual'
-  | 'system'
-  | 'webhook'
+  // Communication
+  | 'email'          // email messages (M365, Gmail)
+  | 'chat'           // Teams, Slack, Discord messages
+  | 'sms'            // SMS / text messages
+  | 'call'           // phone call transcripts or summaries
+  // Operational
+  | 'ticket'         // support tickets (HaloPSA, Zendesk, Jira)
+  | 'device'         // device inventory / alerts (NinjaOne)
+  | 'calendar'       // calendar events and meetings
+  | 'contact'        // contact records (CRM, M365 contacts)
+  | 'invoice'        // billing / financial records
+  | 'contract'       // contracts, SLAs, agreements
+  // AI / Session
+  | 'llm-session'    // extracted from AI conversation sessions
+  | 'note'           // manual notes / observations
+  // System
+  | 'manual'         // manually pushed via webhook
+  | 'webhook'        // raw webhook push (sourceType not specified)
+  | 'system'         // system-generated (e.g. truth engine, bootstrap)
 
 // ── Core Memory Types ─────────────────────────────────────────────────────────
 
@@ -72,11 +84,11 @@ export interface Palace {
 // ── Connector Plugin System ───────────────────────────────────────────────────
 
 export interface RawMemory {
-  content: string
+  content:    string
   sourceType: SourceType
   sourceRef?: string
-  occurredAt: Date
-  metadata?: Record<string, unknown>
+  occurredAt?: Date           // when the event happened in the source system (optional — manual/webhook may not have it)
+  metadata?:  Record<string, unknown>
 }
 
 export interface Connector {

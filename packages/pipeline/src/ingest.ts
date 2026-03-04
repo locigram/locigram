@@ -15,6 +15,15 @@ export interface IngestResult {
 // Minimum extraction confidence — locigrams below this are noise and not stored
 const MIN_CONFIDENCE = 0.3
 
+// Normalize importance values from different connectors to low|normal|high
+function normalizeImportance(raw?: string): string {
+  if (!raw) return 'normal'
+  const v = raw.toLowerCase()
+  if (v === 'high' || v === 'urgent' || v === 'critical' || v === '1') return 'high'
+  if (v === 'low' || v === '3')   return 'low'
+  return 'normal'
+}
+
 export async function ingest(
   rawMemories: RawMemory[],
   db: DB,
@@ -55,7 +64,7 @@ export async function ingest(
           occurredAt:    raw.occurredAt ?? null,
           locus:         extraction.locus,
           clientId:      (raw.metadata?.client_id as string | undefined) ?? null,
-          importance:    (raw.metadata?.importance as string | undefined) ?? 'normal',
+          importance:    normalizeImportance(raw.metadata?.importance as string | undefined),
           tier:          'hot',
           isReference:   extraction.isReference ?? false,
           referenceType: extraction.referenceType ?? null,
