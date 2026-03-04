@@ -1,0 +1,282 @@
+# Locigram — Example Palace K8s Manifest
+#
+# This is a TEMPLATE. Replace all placeholder values before applying.
+# NEVER commit a populated version of this file to a public repo.
+#
+# Deployment steps:
+#   1. Copy this file: cp palace-example.yaml palace-<name>.yaml
+#   2. Add palace-<name>.yaml to .gitignore
+#   3. Fill in all values marked <YOUR_...>
+#   4. kubectl apply -f palace-<name>.yaml
+#   5. Set connector secrets separately (see bottom of file)
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: locigram-<palace-id>   # e.g. locigram-alice
+
+---
+# Core secrets — set real values here, keep this file out of git
+apiVersion: v1
+kind: Secret
+metadata:
+  name: locigram-secrets
+  namespace: locigram-<palace-id>
+stringData:
+  POSTGRES_PASSWORD: "<YOUR_POSTGRES_PASSWORD>"
+  API_TOKEN:         "<YOUR_API_TOKEN>"          # generate: openssl rand -hex 32
+
+---
+# Palace configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: locigram-config
+  namespace: locigram-<palace-id>
+data:
+  PALACE_ID:   "<palace-id>"           # e.g. alice — must match namespace suffix
+  PALACE_NAME: "<Your Name>"
+  PORT:        "3000"
+
+  # Qdrant (in-cluster)
+  QDRANT_URL:  "http://locigram-qdrant:6333"
+
+  # LLM — Embedding (any OpenAI-compatible endpoint)
+  LOCIGRAM_EMBED_URL:   "http://localhost:11434/v1"  # replace with your endpoint
+  LOCIGRAM_EMBED_MODEL: "nomic-embed-text"
+
+  # LLM — Extraction
+  LOCIGRAM_EXTRACT_URL:   "http://localhost:11434/v1"
+  LOCIGRAM_EXTRACT_MODEL: "qwen2.5:7b"
+
+  # LLM — Summarization (optional — falls back to extraction model)
+  # LOCIGRAM_SUMMARY_URL:   ""
+  # LOCIGRAM_SUMMARY_MODEL: ""
+
+  # /no_think flag (Qwen3 models only — eliminates <think> CoT blocks)
+  LOCIGRAM_EXTRACT_NO_THINK: "false"
+  LOCIGRAM_SUMMARY_NO_THINK: "false"
+
+  # ── Connector config (IDs/URLs only — secrets go in locigram-connector-secrets) ──
+
+  # Microsoft 365
+  # LOCIGRAM_M365_TENANT_ID:  "<YOUR_TENANT_ID>"
+  # LOCIGRAM_M365_CLIENT_ID:  "<YOUR_CLIENT_ID>"
+  # LOCIGRAM_M365_MAILBOXES:  "you@company.com,support@company.com"
+
+  # HaloPSA
+  # LOCIGRAM_HALOPSA_URL:       "https://yourinstance.halopsa.com"
+  # LOCIGRAM_HALOPSA_CLIENT_ID: "<YOUR_CLIENT_ID>"
+
+  # NinjaOne
+  # LOCIGRAM_NINJA_CLIENT_ID: "<YOUR_CLIENT_ID>"
+
+  # QuickBooks Online
+  # LOCIGRAM_QBO_CLIENT_ID: "<YOUR_CLIENT_ID>"
+  # LOCIGRAM_QBO_REALM_ID:  "<YOUR_REALM_ID>"
+
+---
+# Postgres
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: locigram-postgres
+  namespace: locigram-<palace-id>
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: locigram-postgres
+  template:
+    metadata:
+      labels:
+        app: locigram-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          env:
+            - name: POSTGRES_DB
+              value: locigram
+            - name: POSTGRES_USER
+              value: locigram
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: locigram-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata   # required — Longhorn has lost+found at root
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: locigram-postgres-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: locigram-postgres-pvc
+  namespace: locigram-<palace-id>
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn   # change to your storage class if not using Longhorn
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: locigram-postgres
+  namespace: locigram-<palace-id>
+spec:
+  selector:
+    app: locigram-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+---
+# Qdrant
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: locigram-qdrant
+  namespace: locigram-<palace-id>
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: locigram-qdrant
+  template:
+    metadata:
+      labels:
+        app: locigram-qdrant
+    spec:
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:latest
+          ports:
+            - containerPort: 6333
+            - containerPort: 6334
+          readinessProbe:
+            httpGet:
+              path: /healthz      # note: /healthz not /health
+              port: 6333
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: qdrant-data
+              mountPath: /qdrant/storage
+      volumes:
+        - name: qdrant-data
+          persistentVolumeClaim:
+            claimName: locigram-qdrant-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: locigram-qdrant-pvc
+  namespace: locigram-<palace-id>
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: locigram-qdrant
+  namespace: locigram-<palace-id>
+spec:
+  selector:
+    app: locigram-qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+    - name: grpc
+      port: 6334
+      targetPort: 6334
+
+---
+# Locigram server
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: locigram-server
+  namespace: locigram-<palace-id>
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: locigram-server
+  template:
+    metadata:
+      labels:
+        app: locigram-server
+    spec:
+      initContainers:
+        - name: migrate
+          image: ghcr.io/locigram/locigram:latest
+          command: ["/bin/sh", "-c", "node --import /opt/homebrew/lib/node_modules/tsx/dist/esm/index.mjs packages/db/src/migrate.ts"]
+          envFrom:
+            - configMapRef:
+                name: locigram-config
+            - secretRef:
+                name: locigram-secrets
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://locigram:$(POSTGRES_PASSWORD)@locigram-postgres:5432/locigram"
+      containers:
+        - name: locigram
+          image: ghcr.io/locigram/locigram:latest
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: locigram-config
+            - secretRef:
+                name: locigram-secrets
+            # Uncomment after creating locigram-connector-secrets:
+            # - secretRef:
+            #     name: locigram-connector-secrets
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://locigram:$(POSTGRES_PASSWORD)@locigram-postgres:5432/locigram"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: locigram-server
+  namespace: locigram-<palace-id>
+spec:
+  type: NodePort
+  selector:
+    app: locigram-server
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30310   # change per palace to avoid conflicts
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Connector secrets — set AFTER applying this manifest, NEVER in a file:
+#
+#   kubectl create secret generic locigram-connector-secrets \
+#     -n locigram-<palace-id> \
+#     --from-literal=LOCIGRAM_M365_CLIENT_SECRET='...' \
+#     --from-literal=LOCIGRAM_HALOPSA_CLIENT_SECRET='...' \
+#     --from-literal=LOCIGRAM_NINJA_CLIENT_SECRET='...' \
+#     --from-literal=LOCIGRAM_QBO_CLIENT_SECRET='...' \
+#     --from-literal=LOCIGRAM_QBO_REFRESH_TOKEN='...'
+#
+# Then add to the server deployment's envFrom:
+#   - secretRef:
+#       name: locigram-connector-secrets
+# ──────────────────────────────────────────────────────────────────────────────

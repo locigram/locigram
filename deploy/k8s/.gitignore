@@ -1,0 +1,3 @@
+# Never commit populated palace manifests — they contain real credentials
+palace-*.yaml
+!palace-example.yaml
