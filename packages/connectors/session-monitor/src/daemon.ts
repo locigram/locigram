@@ -15,11 +15,12 @@ function findNewestJsonl(sessionsDir: string): string | null {
   if (!fs.existsSync(sessionsDir)) return null
   const files = fs.readdirSync(sessionsDir)
     .filter(f => f.endsWith('.jsonl'))
-    .map(f => ({
-      name: f,
-      mtime: fs.statSync(path.join(sessionsDir, f)).mtimeMs,
-    }))
-    .sort((a, b) => b.mtime - a.mtime)
+    .map(f => {
+      const stat = fs.statSync(path.join(sessionsDir, f))
+      return { name: f, birthtime: stat.birthtimeMs, size: stat.size }
+    })
+    // Sort by creation time (newest first) — NOT mtime, which changes when OpenClaw touches old files
+    .sort((a, b) => b.birthtime - a.birthtime)
   return files.length > 0 ? path.join(sessionsDir, files[0].name) : null
 }
 
