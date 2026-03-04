@@ -16,14 +16,14 @@ import { sql } from 'drizzle-orm'
 const id = () => uuid('id').primaryKey().defaultRandom()
 const now = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 const palaceId = () =>
-  uuid('palace_id')
+  text('palace_id')
     .notNull()
     .references(() => palaces.id, { onDelete: 'cascade' })
 
 // ── palaces ───────────────────────────────────────────────────────────────────
 
 export const palaces = pgTable('palaces', {
-  id:        id(),
+  id:        text('id').primaryKey(),
   name:      text('name').notNull(),
   ownerId:   text('owner_id').notNull(),
   apiToken:  text('api_token'),             // hashed bearer token
