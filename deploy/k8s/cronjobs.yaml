@@ -1,0 +1,75 @@
+# K8s CronJob manifests for Locigram background workers
+# Apply to the same namespace as the palace: kubectl apply -f cronjobs.yaml -n locigram-main
+# Replace <palace-id> and <namespace> with actual values
+
+---
+# Nightly sweep: decay recomputation + tier demotion + noise queuing
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: locigram-sweep
+  namespace: locigram-<palace-id>
+spec:
+  schedule: "0 2 * * *"        # 2am daily
+  concurrencyPolicy: Forbid     # don't overlap runs
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          imagePullSecrets:
+            - name: ghcr-pull-secret
+          restartPolicy: OnFailure
+          containers:
+            - name: sweep
+              image: ghcr.io/locigram/locigram:latest
+              command: ["/bin/sh", "-c", "bun run packages/truth/src/sweep.ts"]
+              envFrom:
+                - configMapRef:
+                    name: locigram-config
+                - secretRef:
+                    name: locigram-secrets
+              env:
+                - name: DATABASE_URL
+                  value: "postgresql://locigram:$(POSTGRES_PASSWORD)@locigram-postgres:5432/locigram"
+                - name: LOCIGRAM_DECAY_FACTOR
+                  value: "0.6"
+                - name: LOCIGRAM_DECAY_HOT_THRESHOLD
+                  value: "0.3"
+                - name: LOCIGRAM_DECAY_WARM_THRESHOLD
+                  value: "0.1"
+                - name: LOCIGRAM_DECAY_NOISE_THRESHOLD
+                  value: "0.05"
+
+---
+# Weekly cluster analysis: co-occurrence pairwise SQL + cluster_candidate flagging
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: locigram-cluster
+  namespace: locigram-<palace-id>
+spec:
+  schedule: "0 3 * * 0"        # 3am every Sunday
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          imagePullSecrets:
+            - name: ghcr-pull-secret
+          restartPolicy: OnFailure
+          containers:
+            - name: cluster
+              image: ghcr.io/locigram/locigram:latest
+              command: ["/bin/sh", "-c", "bun run packages/truth/src/cluster.ts"]
+              envFrom:
+                - configMapRef:
+                    name: locigram-config
+                - secretRef:
+                    name: locigram-secrets
+              env:
+                - name: DATABASE_URL
+                  value: "postgresql://locigram:$(POSTGRES_PASSWORD)@locigram-postgres:5432/locigram"
+                - name: LOCIGRAM_CLUSTER_MIN_COOCCURRENCE
+                  value: "5"
+                - name: LOCIGRAM_CLUSTER_WINDOW_DAYS
+                  value: "30"
