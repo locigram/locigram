@@ -68,7 +68,6 @@ export function createMcpHandler(
       const cookieHeader = req.headers.get('Cookie') ?? ''
       const cookieToken = cookieHeader.match(/locigram_token=([^;]+)/)?.[1] ?? ''
       const token = bearerToken || cookieToken
-      console.log(`[mcp-auth] method=${req.method} bearer=${bearerToken.substring(0, 16) || '(none)'} cookie=${cookieToken.substring(0, 16) || '(none)'} expected=${apiToken.substring(0, 16)}`)
       if (token !== apiToken) {
         const publicUrl = process.env.LOCIGRAM_PUBLIC_URL || 'http://localhost:3000'
         return new Response(JSON.stringify({ error: 'Unauthorized' }), {
