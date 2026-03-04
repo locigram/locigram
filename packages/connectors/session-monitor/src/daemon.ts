@@ -29,8 +29,10 @@ function extractSessionId(filePath: string): string {
   return `${date}-${base}`
 }
 
-function parseJsonlLines(text: string): Array<{ role?: string; type?: string; content?: string; message?: string }> {
-  const lines: Array<{ role?: string; type?: string; content?: string; message?: string }> = []
+// OpenClaw JSONL format: { type: 'message', message: { role, content }, timestamp }
+// content is either a string or an array of { type: 'text', text: string } blocks
+function parseJsonlLines(text: string): any[] {
+  const lines: any[] = []
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
@@ -43,16 +45,27 @@ function parseJsonlLines(text: string): Array<{ role?: string; type?: string; co
   return lines
 }
 
-function isConversationMessage(entry: { role?: string; type?: string }): boolean {
-  // Include user and assistant messages, skip tool calls/results
-  if (entry.type === 'tool_use' || entry.type === 'tool_result') return false
-  return entry.role === 'user' || entry.role === 'assistant'
+function isConversationMessage(entry: any): boolean {
+  if (entry?.type !== 'message') return false
+  const role = entry?.message?.role
+  return role === 'user' || role === 'assistant'
 }
 
-function formatMessage(entry: { role?: string; content?: string; message?: string }): string {
-  const role = entry.role ?? 'unknown'
-  const text = entry.content ?? entry.message ?? ''
-  return `[${role}] ${typeof text === 'string' ? text : JSON.stringify(text)}`
+function formatMessage(entry: any): string {
+  const role = entry?.message?.role ?? 'unknown'
+  const content = entry?.message?.content
+  let text = ''
+  if (typeof content === 'string') {
+    text = content
+  } else if (Array.isArray(content)) {
+    text = content
+      .filter((c: any) => c?.type === 'text')
+      .map((c: any) => c.text ?? '')
+      .join(' ')
+  }
+  // Truncate long messages, skip pure tool noise
+  const cleaned = text.replace(/\[tool_call\].*$/s, '').trim()
+  return `[${role}]: ${cleaned.slice(0, 600)}`
 }
 
 export function startDaemon(): void {
