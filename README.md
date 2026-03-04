@@ -388,11 +388,13 @@ curl -X POST http://localhost:3000/api/webhook/ingest \
 └─────────────────────────────────────────────┘
 ```
 
-- **Postgres** — structured storage (locigrams, truths, entities, sources)
+- **Postgres** — structured storage (locigrams, truths, entities, sources, retrieval_events)
 - **Qdrant** — vector search for semantic recall (hot + warm tier only; cold = Postgres-only)
 - **Pipeline** — ingests raw content, calls LLM to extract entities + memory units
-- **Truth engine** — promotes repeated facts into truths with confidence scores
+- **Truth engine** — promotes repeated facts into truths with confidence scores; merges co-retrieved clusters
 - **Connectors** — pull from external sources; auto-activated by env vars
+- **Sweep worker** — nightly K8s CronJob; recomputes access scores using inverse power-law decay, demotes stale tiers, queues confirmed noise for expiry
+- **Cluster worker** — weekly K8s CronJob; co-occurrence analysis on retrieval history, flags frequently co-retrieved locigrams for truth merging
 
 **Two ingestion paths:**
 
@@ -459,6 +461,11 @@ Every memory unit ever stored. One table, all sources. Columns handle the segmen
 | **Vector** | | | |
 | `embedding_id` | `TEXT` | `NULL` | Qdrant point ID. `NULL` = pending embed. Background worker picks up `embedding_id IS NULL AND tier IN ('hot','warm')` every 30s. |
 | `palace_id` | `TEXT FK` | — | References `palaces(id) ON DELETE CASCADE` |
+| **Access scoring** | | | |
+| `access_count` | `INT` | `0` | Incremented every time this locigram is returned by a recall query. |
+| `last_accessed_at` | `TIMESTAMPTZ` | `NULL` | Timestamp of last recall hit. `NULL` = never retrieved. |
+| `access_score` | `FLOAT` | `1.0` | Recomputed nightly by sweep worker using inverse power-law decay: `access_count / (days_since_last_access + 1) ^ λ`. Controls tier transitions. |
+| `cluster_candidate` | `BOOLEAN` | `false` | Set by cluster worker when this locigram frequently co-occurs with others in recall queries. Truth engine picks these up for summarization and merging. |
 
 #### Reference Types
 
@@ -482,16 +489,48 @@ When `is_reference = true`, `reference_type` specifies what kind of stable fact 
 #### Storage Tiers
 
 ```
-hot  → ingested within 90 days OR high-confidence OR is_reference=true
-        → active in Qdrant, truth engine processes
-warm → 90 days–1 year, confidence > 0.5
-        → active in Qdrant, lower priority in recall ranking
-cold → archived, low-confidence, superseded (expires_at set), or truth-promoted sources
+hot  → recently active (high access_score) OR is_reference=true
+        → active in Qdrant; truth engine + cluster worker process these
+warm → moderate access_score; older but still occasionally retrieved
+        → active in Qdrant; lower priority in recall ranking
+cold → low access_score; superseded by a truth; or truth-promoted sources
         → Postgres only; removed from Qdrant index
         → kept for audit trail, never deleted
+        → candidates for LLM noise re-assessment (may be expired if confirmed garbage)
 ```
 
-The truth engine handles hot→warm→cold demotion automatically. When multiple locigrams are promoted to a Truth, the source locigrams move to `cold`. This keeps the Qdrant index lean as data accumulates.
+#### Temporal Decay — How Tiers Are Managed
+
+Tiers are not assigned once and forgotten. A **sweep worker** (K8s CronJob, runs nightly at 2am) recomputes every locigram's `access_score` using an **inverse power-law decay function** modelled on the **Ebbinghaus Forgetting Curve** — the scientific basis for how human memory fades:
+
+```
+access_score = access_count / (days_since_last_access + 1) ^ λ
+```
+
+- `access_count` — incremented every time this locigram is returned in a recall query
+- `days_since_last_access` — computed at sweep time, not stored
+- `λ` (lambda) — **decay factor** (default `0.6`); higher = faster forgetting
+
+The score is *recomputed*, not decremented. This means no write-heavy decay daemon, no drift if the job misses a night, and the formula self-corrects on the next run.
+
+**Tier transition thresholds (configurable):**
+
+| Condition | Action |
+|-----------|--------|
+| `access_score < 0.3` AND `tier = hot` | Demote to `warm` |
+| `access_score < 0.1` AND `tier = warm` | Demote to `cold` |
+| `access_score < 0.05` AND `tier = cold` AND `is_reference = false` | Queue for LLM noise re-assessment |
+| LLM confirms noise (spam / zero-context / orphaned) | Set `expires_at = NOW()` |
+
+`is_reference = true` locigrams (device facts, contracts, contacts) are **exempt from decay** — reference data stays hot regardless of access frequency.
+
+#### Co-Retrieval Clustering
+
+Every recall query logs the returned locigram IDs to a `retrieval_events` table. A **cluster worker** (K8s CronJob, runs weekly) analyzes pairwise co-occurrence: locigrams that are consistently retrieved together across many queries are flagged as `cluster_candidate = true`.
+
+The truth engine picks up candidates, groups them transitively, runs LLM summarization on each group, and stores a single merged truth. Source locigrams move to `cold` and their Qdrant vectors are replaced by the merged truth's vector.
+
+This is a more direct truth promotion signal than time-based reinforcement: co-retrieval means the system is literally proving these memories belong together through usage.
 
 #### Indexes
 
@@ -546,6 +585,22 @@ Named entity registry. Every person, org, product, topic, or place mentioned acr
 | `palace_id` | `TEXT FK` | — |
 | `created_at` | `TIMESTAMPTZ` | — |
 | `updated_at` | `TIMESTAMPTZ` | Updated when aliases merge or metadata changes |
+
+---
+
+### retrieval_events
+
+Co-retrieval log. Every recall query appends one row recording which locigram IDs were returned. The cluster worker uses this table to compute pairwise co-occurrence frequencies and identify memories that belong together.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | `UUID PK` | — |
+| `palace_id` | `TEXT FK` | References `palaces(id) ON DELETE CASCADE` |
+| `query_text` | `TEXT` | The original search query (for debugging/analysis) |
+| `locigram_ids` | `TEXT[]` | All locigram IDs returned in this query result — GIN indexed |
+| `retrieved_at` | `TIMESTAMPTZ` | — |
+
+The cluster worker runs a pairwise unnest query across this table (30-day window) to count how often each pair of locigrams appears together. Pairs above `LOCIGRAM_CLUSTER_MIN_COOCCURRENCE` (default: 5) get `cluster_candidate = true` set on both records.
 
 ---
 
