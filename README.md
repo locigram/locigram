@@ -431,14 +431,26 @@ Configure in OpenClaw:
 
 ### Agent Compaction Recovery
 
-Each persistent agent uses `memory_session_start` on post-compaction recovery, scoped to its own locus (`agent/main`, `agent/watcher`, etc.):
+Each persistent agent uses `memory_session_start` on post-compaction recovery, scoped to its own locus (`agent/main`, `agent/watcher`, etc.). This is wired directly into each agent's `SOUL.md` so it runs automatically on context restart.
 
 ```
 On compaction recovery:
   1. Call memory_session_start(locus='agent/<name>', lookbackDays=7)
   2. Returns: recent decisions, active context, high-importance items
   3. Compare against current task — nothing falls through
+  4. Fallback: read project pages + live-handoff.md if MCP unavailable
 ```
+
+Built-in agent loci:
+
+| Agent | Locus | Additional tools wired in SOUL.md |
+|-------|-------|----------------------------------|
+| Main session | `agent/main` | — |
+| Watcher | `agent/watcher` | — |
+| MSP / business ops | `agent/msp` | `memory_client` for pre-interaction context |
+| DevOps | `agent/devops` | `memory_reference` for infrastructure lookups |
+
+To wire your own OpenClaw agent: add the `memory_session_start` call to its `SOUL.md` with the appropriate locus.
 
 ---
 
