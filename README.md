@@ -385,6 +385,63 @@ MCP endpoint: `http://<your-locigram-host>/mcp` (see MCP section below).
 
 ---
 
+## MCP Integration
+
+Locigram exposes an **MCP (Model Context Protocol) server** at `/mcp`. This is the primary integration point for OpenClaw and any other AI assistant.
+
+**Endpoint:** `http://<your-locigram-host>/mcp`
+**Auth:** `Authorization: Bearer <API_TOKEN>`
+**Transport:** Streamable HTTP (MCP spec 2025-03-26)
+
+Configure in OpenClaw:
+```json
+{
+  "mcp": {
+    "servers": {
+      "locigram": {
+        "url": "http://<your-locigram-host>/mcp",
+        "token": "<your-api-token>"
+      }
+    }
+  }
+}
+```
+
+### MCP Tools (12 total)
+
+#### Read
+| Tool | Description |
+|------|-------------|
+| `memory_recall` | Semantic search via Qdrant. Returns scored locigrams for a query. Optional locus filter. |
+| `memory_context` | Proactive context for current task. Hybrid recency + semantic. |
+| `memory_client` | All memories for a specific client ID. Business use case: pull everything known about a client before an interaction. |
+| `memory_reference` | Precise lookup for stable reference data (IPs, contracts, contacts, software versions). Authoritative, not semantic. |
+| `memory_session_start` | **Compaction recovery.** Returns recent decisions + active context for a given agent locus. Call this immediately after context compaction to recover state. |
+| `people_lookup` | All memories and entity profile for a named person. |
+| `truth_get` | High-confidence promoted facts only. Min confidence filter. |
+| `recent_activity` | Browse memories by time window. |
+| `palace_stats` | Locigram count, truth count, palace info. |
+
+#### Write
+| Tool | Description |
+|------|-------------|
+| `memory_remember` | Store a new memory. Direct insert + embed + upsert to Qdrant. |
+| `memory_forget` | Expire a memory. Use when something is no longer true. |
+| `memory_correct` | Supersede a wrong memory with a correction. Immutable audit trail — old memory is expired, not deleted. |
+
+### Agent Compaction Recovery
+
+Each persistent agent uses `memory_session_start` on post-compaction recovery, scoped to its own locus (`agent/main`, `agent/watcher`, etc.):
+
+```
+On compaction recovery:
+  1. Call memory_session_start(locus='agent/<name>', lookbackDays=7)
+  2. Returns: recent decisions, active context, high-importance items
+  3. Compare against current task — nothing falls through
+```
+
+---
+
 ## Architecture
 
 ```
