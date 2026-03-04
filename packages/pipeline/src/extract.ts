@@ -68,7 +68,8 @@ export async function extractFromRaw(
     })
 
     if (!res.ok) {
-      console.warn(`[pipeline] extraction LLM error: ${res.status}`)
+      const errBody = await res.text().catch(() => '')
+      console.warn(`[pipeline] extraction LLM error: ${res.status} ${errBody.slice(0, 300)}`)
       return fallback(raw)
     }
 
