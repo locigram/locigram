@@ -9,6 +9,29 @@ import { pushToLocigram } from './ingest'
 const LOG_PREFIX = '[session-monitor]'
 const SECTION_BREAK_EVERY_N = 15
 
+// ── Types ────────────────────────────────────────────────────────────────────
+
+interface StructuredContext {
+  currentTask: string
+  currentProject: string
+  pendingActions: string[]
+  recentDecisions: string[]
+  blockers: string[]
+  activeAgents: string[]
+  domain: string
+}
+
+interface ActiveContextJson extends StructuredContext {
+  _autoUpdated: string
+  _sessionId: string
+  _finalSnapshot?: boolean
+}
+
+interface LlmResult {
+  narrative: string
+  structured: StructuredContext | null
+}
+
 // ── State ────────────────────────────────────────────────────────────────────
 
 let currentSessionPath: string | null = null
@@ -20,6 +43,11 @@ let sectionNumber = 1
 let lastHandoffAt = 0
 let lastSummaryMessageCount = 0
 let shuttingDown = false
+let lastSessionSwitchAt = 0
+let lastStructured: StructuredContext | null = null
+
+// Pending action drift tracking (task #4)
+let pendingActionHistory: Map<string, number> = new Map()
 
 // ── Logging ──────────────────────────────────────────────────────────────────
 
@@ -46,6 +74,14 @@ function formatTime(d: Date): string {
 
 function formatTimestamp(d: Date): string {
   return `${formatDate(d)} ${formatTime(d)}`
+}
+
+// ── Active context path resolution ───────────────────────────────────────────
+
+function resolveActiveContextPath(): string | null {
+  if (config.activeContextPath) return config.activeContextPath
+  if (config.handoffPath) return path.join(path.dirname(config.handoffPath), 'active-context.json')
+  return null
 }
 
 // ── Session file discovery ───────────────────────────────────────────────────
@@ -214,16 +250,20 @@ function httpPostJson(urlString: string, body: object, headers?: Record<string, 
 
 // ── LLM summarization via Locigram server ────────────────────────────────────
 
-async function callLlm(prompt: string): Promise<string | null> {
+async function callLlm(prompt: string): Promise<LlmResult | null> {
   try {
     const res = await httpPostJson(
       `${config.locigramUrl}/api/internal/summarize`,
-      { prompt, maxTokens: 800 },
+      { prompt, maxTokens: 1200 },
       { 'Authorization': `Bearer ${config.apiToken}` },
       150_000,
     )
-    if (res.status >= 200 && res.status < 300 && res.data?.summary) {
-      return res.data.summary
+    if (res.status >= 200 && res.status < 300) {
+      const narrative = res.data?.narrative ?? res.data?.summary ?? null
+      const structured = res.data?.structured ?? null
+      if (narrative) {
+        return { narrative, structured }
+      }
     }
     warn(`/api/internal/summarize returned ${res.status}`)
     return null
@@ -265,6 +305,53 @@ async function readLastJsonlMessages(jsonlPath: string, maxMessages = 150): Prom
   } catch { return '' }
 }
 
+// ── Active context JSON writing ──────────────────────────────────────────────
+
+async function writeActiveContext(structured: StructuredContext | null, finalSnapshot = false): Promise<void> {
+  const contextPath = resolveActiveContextPath()
+  if (!contextPath) return
+
+  const context: ActiveContextJson = {
+    currentTask: structured?.currentTask ?? 'unknown',
+    currentProject: structured?.currentProject ?? 'unknown',
+    pendingActions: structured?.pendingActions ?? [],
+    recentDecisions: structured?.recentDecisions ?? [],
+    blockers: structured?.blockers ?? [],
+    activeAgents: structured?.activeAgents ?? [],
+    domain: structured?.domain ?? 'general',
+    _autoUpdated: new Date().toISOString(),
+    _sessionId: currentSessionId,
+  }
+
+  if (finalSnapshot) {
+    context._finalSnapshot = true
+  }
+
+  await fsp.mkdir(path.dirname(contextPath), { recursive: true })
+  await fsp.writeFile(contextPath, JSON.stringify(context, null, 2), 'utf8')
+  log(`active-context.json written${finalSnapshot ? ' (final snapshot)' : ''}: ${contextPath}`)
+}
+
+// ── Pending action drift detection (#4) ──────────────────────────────────────
+
+function trackPendingActionDrift(structured: StructuredContext | null): void {
+  if (!structured?.pendingActions?.length) return
+
+  const currentActions = new Set(structured.pendingActions)
+  const newHistory = new Map<string, number>()
+
+  for (const action of currentActions) {
+    const prev = pendingActionHistory.get(action) ?? 0
+    const count = prev + 1
+    newHistory.set(action, count)
+    if (count >= 3) {
+      warn(`stale pending action: "${action}" unchanged for ${count} handoffs`)
+    }
+  }
+
+  pendingActionHistory = newHistory
+}
+
 // ── Handoff dump ─────────────────────────────────────────────────────────────
 
 async function triggerHandoffDump(triggerSizeMb: number, triggerReason = 'file-size'): Promise<void> {
@@ -278,6 +365,7 @@ async function triggerHandoffDump(triggerSizeMb: number, triggerReason = 'file-s
     return
   }
 
+  // Task-aware summarization prompt with domain detection (#8)
   const prompt = [
     `You are summarizing an ongoing AI assistant session for agent "${config.agentName}" for context handoff.`,
     'Read the transcript below and extract:',
@@ -287,14 +375,28 @@ async function triggerHandoffDump(triggerSizeMb: number, triggerReason = 'file-s
     '4. What was being worked on in the most recent messages',
     '5. Immediate next steps (ordered list)',
     '',
+    'Detect the primary domain of the work from the transcript:',
+    '- infrastructure: server setup, networking, deployment, Docker, K8s, CI/CD',
+    '- coding: writing/debugging code, implementing features, refactoring',
+    '- email: email management, correspondence, communication',
+    '- business/finance: invoicing, contracts, client management, accounting',
+    '- general: everything else',
+    'Prepend your summary with: **Domain:** <detected domain>',
+    '',
     'Keep it under 600 words. Be specific. Focus on recent activity but capture the full arc.',
     '',
     'TRANSCRIPT (beginning + recent):',
     condensedTranscript,
   ].join('\n')
 
-  let summary = await callLlm(prompt)
-  if (!summary) {
+  const llmResult = await callLlm(prompt)
+  let summary: string
+  let structured: StructuredContext | null = null
+
+  if (llmResult) {
+    summary = llmResult.narrative
+    structured = llmResult.structured
+  } else {
     warn('handoff summary unavailable; writing raw transcript tail as fallback')
     const tail = condensedTranscript.split('\n').slice(-150).join('\n')
     summary = `## Raw Transcript Tail (last 150 lines \u2014 LLM unavailable)\n\n${tail}`
@@ -314,6 +416,13 @@ async function triggerHandoffDump(triggerSizeMb: number, triggerReason = 'file-s
     await fsp.writeFile(config.handoffPath, out, 'utf8')
     log(`handoff dump written (${triggerReason}): ${config.handoffPath}`)
   }
+
+  // Write active-context.json (#2)
+  lastStructured = structured
+  await writeActiveContext(structured)
+
+  // Track pending action drift (#4)
+  trackPendingActionDrift(structured)
 
   lastHandoffAt = Date.now()
 
@@ -398,7 +507,7 @@ async function detectProject(): Promise<void> {
   ].join('\n')
   const llmResult = await callLlm(prompt)
   if (!llmResult) { warn('project detection: LLM unavailable'); return }
-  const projectName = sanitizeProjectName(llmResult)
+  const projectName = sanitizeProjectName(llmResult.narrative)
   if (!projectName) return
   // Create project stub if Obsidian vault configured
   const projectsDir = path.join(config.obsidianVault, 'Projects')
@@ -410,18 +519,74 @@ async function detectProject(): Promise<void> {
   log(`project detection: created stub ${targetPath}`)
 }
 
+// ── Startup reconciliation (#3) ──────────────────────────────────────────────
+
+async function startupReconciliation(): Promise<void> {
+  const contextPath = resolveActiveContextPath()
+  if (!contextPath || !config.handoffPath) return
+
+  let contextJson: ActiveContextJson | null = null
+  let handoffText: string | null = null
+
+  try {
+    const raw = await fsp.readFile(contextPath, 'utf8')
+    contextJson = JSON.parse(raw)
+  } catch { /* no active-context.json yet */ }
+
+  try {
+    handoffText = await fsp.readFile(config.handoffPath, 'utf8')
+  } catch { /* no handoff file yet */ }
+
+  if (!contextJson || !handoffText) return
+
+  const task = contextJson.currentTask
+  if (task && task !== 'unknown' && !handoffText.includes(task)) {
+    warn(`context drift detected: JSON says "${task}" but narrative differs`)
+  }
+}
+
+// ── Multi-agent awareness (#6) ───────────────────────────────────────────────
+
+async function logAgentDirCount(): Promise<void> {
+  try {
+    const entries = await fsp.readdir(config.agentsDir)
+    let agentCount = 0
+    for (const entry of entries) {
+      const sessionsDir = path.join(config.agentsDir, entry, 'sessions')
+      try {
+        await fsp.access(sessionsDir, fs.constants.F_OK)
+        agentCount++
+      } catch { /* not an agent dir */ }
+    }
+    log(`multi-agent: ${agentCount} agent session dir(s) found in ${config.agentsDir}`)
+  } catch {
+    log('multi-agent: unable to scan agents dir')
+  }
+}
+
 // ── Session attachment ───────────────────────────────────────────────────────
 
 async function attachSessionFile(sessionPath: string): Promise<void> {
-  // Archive handoff before switching sessions
+  // Session continuity awareness (#5)
+  const now = Date.now()
+  const timeSinceLastSwitch = now - lastSessionSwitchAt
+  const CONTINUITY_WINDOW_MS = 15 * 60 * 1000  // 15 minutes
+
   if (currentSessionPath && currentSessionPath !== sessionPath) {
-    await archiveHandoffOnSessionSwitch()
+    if (lastSessionSwitchAt > 0 && timeSinceLastSwitch < CONTINUITY_WINDOW_MS) {
+      log('session continuity: resuming within 15min window, preserving context')
+      // Skip archive/reset — just update the session path
+    } else {
+      await archiveHandoffOnSessionSwitch()
+    }
   }
+
   if (currentSessionPath) fs.unwatchFile(currentSessionPath)
   currentSessionPath = sessionPath
   currentSessionId = deriveSessionId(sessionPath)
   lastReadPosition = 0
   pendingLineBuffer = ''
+  lastSessionSwitchAt = now
   log(`session file found: ${sessionPath}`)
   await ensureTranscriptDir()
   const initialStat = await fsp.stat(sessionPath)
@@ -462,6 +627,12 @@ function setupShutdownHandlers(sessionTimer: NodeJS.Timeout, projectTimer: NodeJ
       const sizeMb = currentSessionPath ? (await fsp.stat(currentSessionPath)).size / (1024 * 1024) : 0
       await triggerHandoffDump(sizeMb, 'shutdown')
     } catch (error) { warn(`shutdown handoff failed: ${String(error)}`) }
+
+    // End-of-session final snapshot (#9)
+    try {
+      await writeActiveContext(lastStructured, true)
+    } catch (error) { warn(`final snapshot write failed: ${String(error)}`) }
+
     process.exit(0)
   }
   process.on('SIGINT', onSignal)
@@ -478,8 +649,16 @@ export function startDaemon(): void {
   log(`summary every ${config.summaryEveryN} messages`)
   log(`compaction threshold: ${config.compactionMb}mb`)
   if (config.handoffPath) log(`handoff path: ${config.handoffPath}`)
+  const contextPath = resolveActiveContextPath()
+  if (contextPath) log(`active-context path: ${contextPath}`)
   if (config.discordWebhookUrl) log('discord: webhook configured')
   log(`locigram: ${config.locigramUrl}`)
+
+  // Multi-agent awareness (#6)
+  void logAgentDirCount()
+
+  // Startup reconciliation (#3)
+  void startupReconciliation()
 
   void scanAndMaybeSwitchSession()
   const sessionTimer = setInterval(() => { void scanAndMaybeSwitchSession() }, config.sessionScanMs)

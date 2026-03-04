@@ -361,6 +361,17 @@ OpenClaw integrates with Locigram via **MCP** — not a custom connector. Config
 
 MCP endpoint: `http://<your-locigram-host>/mcp` (see MCP section below).
 
+#### Session Monitor (`@locigram/session-monitor`)
+
+A daemon that watches OpenClaw agent session JSONL files and generates handoff summaries. Produces two outputs per handoff cycle:
+
+- **`live-handoff.md`** — narrative markdown summary (current task, decisions, files changed, next steps)
+- **`active-context.json`** — structured JSON state (currentTask, currentProject, pendingActions, recentDecisions, blockers, activeAgents, domain)
+
+Features: task-aware summarization with domain detection, startup reconciliation (JSON vs narrative cross-check), pending action drift detection (3+ unchanged = stale warning), session continuity (15min window preserves context), end-of-session final snapshot.
+
+See [`packages/connectors/session-monitor/README.md`](packages/connectors/session-monitor/README.md) for full documentation.
+
 #### External connectors (pull-based — activate by setting env vars)
 | Variable | Connector | Description |
 |----------|-----------|-------------|

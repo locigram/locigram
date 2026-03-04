@@ -144,6 +144,16 @@ export function createApp(config: AppConfig) {
       return c.json({ error: 'prompt is required' }, 400)
     }
 
+    // Wrap prompt to request both narrative + structured JSON in one LLM call
+    const wrappedPrompt = [
+      prompt,
+      '',
+      'IMPORTANT: After your narrative summary, output a line containing exactly "---STRUCTURED_JSON---" followed by a JSON object on the next line with these fields:',
+      '{ "currentTask": string, "currentProject": string, "pendingActions": string[], "recentDecisions": string[], "blockers": string[], "activeAgents": string[], "domain": "infrastructure"|"coding"|"email"|"business/finance"|"general" }',
+      'The domain field should reflect the primary domain of the transcript content.',
+      'Output the narrative first, then the separator, then the JSON. Nothing after the JSON.',
+    ].join('\n')
+
     const { url, model, apiKey, noThink } = config.llm.summary
     try {
       const res = await fetch(`${url}/chat/completions`, {
@@ -154,8 +164,8 @@ export function createApp(config: AppConfig) {
         },
         body: JSON.stringify({
           model,
-          messages: [{ role: 'user', content: noThink ? prompt + ' /no_think' : prompt }],
-          max_tokens: maxTokens ?? 800,
+          messages: [{ role: 'user', content: noThink ? wrappedPrompt + ' /no_think' : wrappedPrompt }],
+          max_tokens: maxTokens ?? 1200,
         }),
       })
 
@@ -164,7 +174,22 @@ export function createApp(config: AppConfig) {
       const content = parsed.choices?.[0]?.message?.content ?? ''
       const cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
 
-      return c.json({ summary: cleaned })
+      // Split into narrative + structured
+      const separatorIdx = cleaned.indexOf('---STRUCTURED_JSON---')
+      let narrative = cleaned
+      let structured: Record<string, unknown> | null = null
+
+      if (separatorIdx !== -1) {
+        narrative = cleaned.slice(0, separatorIdx).trim()
+        const jsonPart = cleaned.slice(separatorIdx + '---STRUCTURED_JSON---'.length).trim()
+        try {
+          structured = JSON.parse(jsonPart)
+        } catch {
+          console.warn('[api/internal/summarize] failed to parse structured JSON from LLM output')
+        }
+      }
+
+      return c.json({ summary: narrative, narrative, structured })
     } catch (err: any) {
       console.error('[api/internal/summarize] LLM call failed:', err.message)
       return c.json({ error: 'LLM call failed', detail: err.message }, 502)

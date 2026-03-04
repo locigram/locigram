@@ -34,8 +34,9 @@ switch (cmd) {
     console.log(`[status] summary every: ${config.summaryEveryN} messages`)
     console.log(`[status] compaction threshold: ${config.compactionMb}mb`)
     console.log(`[status] handoff path: ${config.handoffPath ?? '(not set)'}`)
+    console.log(`[status] active context path: ${config.activeContextPath ?? '(defaults to handoff dir)'}`)
     console.log(`[status] workspace root: ${config.workspaceRoot ?? '(not set)'}`)
-    console.log(`[status] discord: ${config.discordToken ? 'configured' : '(not set)'}`)
+    console.log(`[status] discord: ${config.discordWebhookUrl ? 'configured' : '(not set)'}`)
 
     // Test connectivity
     if (config.locigramUrl) {
@@ -79,6 +80,7 @@ Tuning:
 
 Optional — handoff file:
   LOCIGRAM_HANDOFF_PATH           Write handoff summary to this file
+  ACTIVE_CONTEXT_PATH             Write active-context.json here (default: same dir as handoff)
   OPENCLAW_WORKSPACE_ROOT         Workspace root for memory archival
   OBSIDIAN_VAULT                  Obsidian vault path for project detection
 

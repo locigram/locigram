@@ -26,6 +26,7 @@ export const config = {
 
   // Optional — handoff file
   handoffPath:      process.env.LOCIGRAM_HANDOFF_PATH ?? null as string | null,
+  activeContextPath: process.env.ACTIVE_CONTEXT_PATH ?? null as string | null,
   workspaceRoot:    process.env.OPENCLAW_WORKSPACE_ROOT ?? null as string | null,
   obsidianVault:    process.env.OBSIDIAN_VAULT ?? null as string | null,
 
