@@ -21,7 +21,7 @@ COPY packages/connectors/qbo/package.json           ./packages/connectors/qbo/
 COPY packages/connectors/surudb/package.json        ./packages/connectors/surudb/
 COPY packages/connectors/email/package.json         ./packages/connectors/email/
 COPY packages/connectors/sms/package.json           ./packages/connectors/sms/
-COPY packages/connectors/openclaw/package.json      ./packages/connectors/openclaw/
+
 
 # Install deps (workspace-aware)
 RUN bun install

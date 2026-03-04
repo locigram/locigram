@@ -352,13 +352,14 @@ curl -X POST http://localhost:3000/api/webhook/ingest \
 
 ### Connectors (all optional — activate by setting values)
 
-#### OpenClaw (push-only)
+#### OpenClaw integration
 
-`connector-openclaw` is the **native OpenClaw integration** — not a generic LLM session connector. It is specifically designed for OpenClaw's session model: session keys, handoff summaries, and the agent memory use case. Future connectors for other AI platforms (Cursor, Claude Desktop, etc.) would be separate packages.
+OpenClaw integrates with Locigram via **MCP** — not a custom connector. Configure Locigram as an MCP server in your OpenClaw config and it works out of the box for any install:
 
-The connector is **push-only** — OpenClaw pushes session summaries to Locigram via `POST /api/webhook/ingest` after generating a handoff. No polling, no credentials required. Activate by wiring `formatSession()` into OpenClaw's session-monitor.
+- **Write path** — OpenClaw calls `memory_remember()` MCP tool at session end to store summaries
+- **Read path** — OpenClaw calls `memory_search()` MCP tool during conversation for recall
 
-Data stored: `connector = 'openclaw'`, `sourceType = 'llm-session'`, `locus = 'agent/openclaw'`, `sourceRef = openclaw:session:{sessionKey}` (dedup key — same session never ingested twice). Min 50 words — short sessions skipped.
+MCP endpoint: `http://<your-locigram-host>/mcp` (see MCP section below).
 
 #### External connectors (pull-based — activate by setting env vars)
 | Variable | Connector | Description |
