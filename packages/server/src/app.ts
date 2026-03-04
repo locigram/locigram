@@ -4,7 +4,7 @@ import { cors } from 'hono/cors'
 import { createDb } from '@locigram/db'
 import { createVectorClient, ensureCollection, embed, searchSimilar } from '@locigram/vector'
 import { startEmbedWorker, defaultPipelineConfig } from '@locigram/pipeline'
-import type { PipelineConfig } from '@locigram/pipeline'
+import type { PipelineConfig, LLMConfig } from '@locigram/pipeline'
 import { startTruthEngine } from '@locigram/truth'
 import { buildWebhookRoute } from '@locigram/connector-webhook'
 import { palaceMiddleware } from './middleware/palace'
@@ -18,41 +18,40 @@ import { timelineRoute } from './routes/timeline'
 import { feedbackRoute } from './routes/feedback'
 import { bootstrapRoute } from './routes/bootstrap'
 import { buildTools } from './mcp/tools'
+import { autoRegisterConnectors } from './connectors'
 
 export interface AppConfig {
-  databaseUrl:    string
-  palaceId:       string
-  apiToken?:      string
-  qdrantUrl:      string
-  embeddingUrl:   string
-  embeddingModel: string
-  llmUrl?:        string
-  llmModel?:      string
+  databaseUrl: string
+  palaceId:    string
+  apiToken?:   string
+  qdrantUrl:   string
+  llm:         LLMConfig
 }
 
 export function createApp(config: AppConfig) {
   const db = createDb(config.databaseUrl)
 
-  // Pipeline config — shared across routes and workers
+  // Pipeline config — shared across routes and background workers
   const pipelineConfig: PipelineConfig = {
     ...defaultPipelineConfig(),
     palaceId: config.palaceId,
-    llmUrl:   config.llmUrl   ?? process.env.MIDRANGE_LB_URL ?? 'http://YOUR_K8S_NODE_IP:30891/v1',
-    llmModel: config.llmModel ?? process.env.EXTRACTION_MODEL ?? 'qwen3.5-35b-a3b',
+    llm:      config.llm,
   }
 
   // Vector client — wraps Qdrant + embedding model
   const { client: qdrant } = createVectorClient({
     qdrantUrl:      config.qdrantUrl,
-    embeddingUrl:   config.embeddingUrl,
-    embeddingModel: config.embeddingModel,
+    embeddingUrl:   config.llm.embed.url,
+    embeddingModel: config.llm.embed.model,
+    embeddingKey:   config.llm.embed.apiKey,
   })
 
   // Convenience wrapper passed via context
   const vectorClient = {
     embed: (text: string) => embed(text, {
-      embeddingUrl:   config.embeddingUrl,
-      embeddingModel: config.embeddingModel,
+      embeddingUrl:   config.llm.embed.url,
+      embeddingModel: config.llm.embed.model,
+      embeddingKey:   config.llm.embed.apiKey,
     }),
     search: (collection: string, vector: number[], opts: object) =>
       searchSimilar(qdrant, collection, vector, opts as any),
@@ -67,6 +66,10 @@ export function createApp(config: AppConfig) {
   ensureCollection(qdrant, collectionName).catch(err =>
     console.error('[app] failed to ensure Qdrant collection:', err)
   )
+
+  // Auto-register connectors from env vars — no config file needed
+  const registry = autoRegisterConnectors()
+  console.log(`[app] registered connectors: ${registry.list().map(c => c.name).join(', ') || 'none (webhook always active)'}`)
 
   // Start background embed worker (every 30s)
   const stopWorker = startEmbedWorker(db, vectorClient, config.palaceId, 30_000)

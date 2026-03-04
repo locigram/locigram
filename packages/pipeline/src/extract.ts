@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { RawMemory } from '@locigram/core'
-import type { PipelineConfig } from './config'
+import type { PipelineConfig, LLMRole } from './config'
 
 const ExtractionSchema = z.object({
   entities: z.array(z.object({
@@ -37,21 +37,28 @@ function fallback(raw: RawMemory): ExtractionResult {
   }
 }
 
+function authHeaders(role: LLMRole): Record<string, string> {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (role.apiKey) h['Authorization'] = `Bearer ${role.apiKey}`
+  return h
+}
+
 export async function extractFromRaw(
   raw: RawMemory,
   config: PipelineConfig,
 ): Promise<ExtractionResult> {
+  const role = config.llm.extract
   try {
-    const res = await fetch(`${config.llmUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const res = await fetch(`${role.url}/chat/completions`, {
+      method:  'POST',
+      headers: authHeaders(role),
       body: JSON.stringify({
-        model: config.llmModel,
+        model: role.model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: raw.content },
+          { role: 'user',   content: raw.content },
         ],
-        temperature: 0.1,
+        temperature:     0.1,
         response_format: { type: 'json_object' },
       }),
     })

@@ -1,10 +1,11 @@
 import { QdrantClient } from '@qdrant/js-client-rest'
 
 export interface VectorConfig {
-  qdrantUrl: string
-  embeddingUrl: string
+  qdrantUrl:      string
+  embeddingUrl:   string
   embeddingModel: string
-  vectorSize?: number  // default 4096 (Qwen3-Embedding-8B)
+  embeddingKey?:  string   // optional API key for embedding endpoint
+  vectorSize?:    number   // default 768 (nomic-embed-text) or 4096 (Qwen3-Embedding-8B)
 }
 
 export function createVectorClient(config: VectorConfig) {

@@ -1,9 +1,15 @@
 import type { VectorConfig } from './client'
 
-export async function embed(text: string, config: Pick<VectorConfig, 'embeddingUrl' | 'embeddingModel'>): Promise<number[]> {
+export async function embed(
+  text: string,
+  config: Pick<VectorConfig, 'embeddingUrl' | 'embeddingModel' | 'embeddingKey'>,
+): Promise<number[]> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (config.embeddingKey) headers['Authorization'] = `Bearer ${config.embeddingKey}`
+
   const res = await fetch(`${config.embeddingUrl}/embeddings`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ model: config.embeddingModel, input: text }),
   })
 
