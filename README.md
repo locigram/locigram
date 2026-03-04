@@ -351,6 +351,16 @@ curl -X POST http://localhost:3000/api/webhook/ingest \
 | `LOCIGRAM_SUMMARY_KEY` | _(blank)_ | API key |
 
 ### Connectors (all optional — activate by setting values)
+
+#### OpenClaw (push-only)
+
+`connector-openclaw` is the **native OpenClaw integration** — not a generic LLM session connector. It is specifically designed for OpenClaw's session model: session keys, handoff summaries, and the agent memory use case. Future connectors for other AI platforms (Cursor, Claude Desktop, etc.) would be separate packages.
+
+The connector is **push-only** — OpenClaw pushes session summaries to Locigram via `POST /api/webhook/ingest` after generating a handoff. No polling, no credentials required. Activate by wiring `formatSession()` into OpenClaw's session-monitor.
+
+Data stored: `connector = 'openclaw'`, `sourceType = 'llm-session'`, `locus = 'agent/openclaw'`, `sourceRef = openclaw:session:{sessionKey}` (dedup key — same session never ingested twice). Min 50 words — short sessions skipped.
+
+#### External connectors (pull-based — activate by setting env vars)
 | Variable | Connector | Description |
 |----------|-----------|-------------|
 | `LOCIGRAM_M365_TENANT_ID` | Microsoft 365 | Entra tenant ID |
@@ -440,7 +450,7 @@ Every memory unit ever stored. One table, all sources. Columns handle the segmen
 | **Source provenance** | | | |
 | `source_type` | `TEXT` | — | What kind of thing this came from: `email`, `ticket`, `device`, `chat`, `conversation`, `manual`, `webhook` |
 | `source_ref` | `TEXT` | `NULL` | Unique ID in the source system — used for dedup. `UNIQUE(palace_id, source_ref)` enforced at DB level. |
-| `connector` | `TEXT` | `NULL` | Which connector produced this: `microsoft365`, `halopsa`, `ninjaone`, `webhook`, `llm-session`, etc. |
+| `connector` | `TEXT` | `NULL` | Which connector produced this: `openclaw`, `microsoft365`, `halopsa`, `ninjaone`, `webhook`, etc. |
 | **Temporal** | | | |
 | `occurred_at` | `TIMESTAMPTZ` | `NULL` | When the underlying event happened (e.g. email received date). Distinct from `created_at` (ingest time). Index allows temporal queries: "what did we know about X in Q4?" |
 | `created_at` | `TIMESTAMPTZ` | `NOW()` | When this locigram was ingested |
