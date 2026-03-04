@@ -28,7 +28,7 @@ export function buildTools(db: DB, palace: Palace) {
       description: 'Store a new memory in the palace.',
       schema: z.object({
         content:    z.string().describe('The memory to store in plain language'),
-        locus:      z.string().default('personal/general').describe('Namespace e.g. people/andrew, project/locigram'),
+        locus:      z.string().default('personal/general').describe('Namespace e.g. people/alice, project/locigram'),
         entities:   z.array(z.string()).default([]).describe('Named entities mentioned'),
         sourceType: z.enum(['manual','llm-session','email','sms','chat','webhook','system']).default('llm-session'),
       }),

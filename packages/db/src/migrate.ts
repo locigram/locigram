@@ -3,7 +3,7 @@ import postgres from 'postgres'
 const url = process.env.DATABASE_URL
 if (!url) throw new Error('DATABASE_URL is required')
 
-const palaceId   = process.env.PALACE_ID   ?? 'andrew'
+const palaceId   = process.env.PALACE_ID   ?? 'default'
 const palaceName = process.env.PALACE_NAME ?? 'Default User'
 
 console.log('[migrate] running migrations...')

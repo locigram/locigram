@@ -3,9 +3,9 @@ import { logger } from 'hono/logger'
 import { cors } from 'hono/cors'
 import { createDb } from '@locigram/db'
 import { createVectorClient, ensureCollection, embed, searchSimilar } from '@locigram/vector'
-import { startEmbedWorker, defaultPipelineConfig } from '@locigram/pipeline'
+import { startEmbedWorker, defaultPipelineConfig, runNoiseAssessment } from '@locigram/pipeline'
 import type { PipelineConfig, LLMConfig } from '@locigram/pipeline'
-import { startTruthEngine } from '@locigram/truth'
+import { startTruthEngine, runSweep } from '@locigram/truth'
 import { buildWebhookRoute } from '@locigram/connector-webhook'
 import { palaceMiddleware } from './middleware/palace'
 import { authMiddleware } from './middleware/auth'
@@ -80,6 +80,22 @@ export function createApp(config: AppConfig) {
     intervalMs: 6 * 60 * 60 * 1000,
   })
 
+  // Schedule nightly sweep (in-process fallback — K8s CronJob preferred)
+  // Only run in-process if LOCIGRAM_DISABLE_INPROCESS_SWEEP is not set
+  let stopSweep: (() => void) | undefined
+  if (!process.env.LOCIGRAM_DISABLE_INPROCESS_SWEEP) {
+    const SWEEP_INTERVAL = 24 * 60 * 60 * 1000  // 24h
+    const sweepInterval = setInterval(async () => {
+      try {
+        await runSweep(db, config.palaceId)
+        await runNoiseAssessment(db, config.palaceId, pipelineConfig)
+      } catch (err) {
+        console.error('[scheduler] sweep failed:', err)
+      }
+    }, SWEEP_INTERVAL)
+    stopSweep = () => clearInterval(sweepInterval)
+  }
+
   const app = new Hono()
 
   // ── Global middleware ──────────────────────────────────────────────────────
@@ -117,7 +133,7 @@ export function createApp(config: AppConfig) {
   // Cleanup on shutdown
   const originalFetch = app.fetch.bind(app)
   return Object.assign(app, {
-    stop: () => { stopWorker(); stopTruth() },
+    stop: () => { stopWorker(); stopTruth(); stopSweep?.() },
     fetch: originalFetch,
   })
 }

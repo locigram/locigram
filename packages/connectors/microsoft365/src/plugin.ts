@@ -9,7 +9,7 @@ export interface Microsoft365ConnectorConfig {
   clientId:     string
   clientSecret: string
 
-  /** Mailboxes to pull email from (e.g. ['andrew@company.com']) */
+  /** Mailboxes to pull email from (e.g. ['user@company.com']) */
   mailboxes?: string[]
 
   /** Teams channels to pull messages from */

@@ -16,7 +16,7 @@ export const SKIP_EMAIL_FOLDERS = new Set([
   'trash',
   'drafts',
   'outbox',
-  'sentitems',   // sent items = things Andrew wrote; handled separately if needed
+  'sentitems',   // sent items = outbound mail; handled separately if needed
 ])
 
 // Sender address patterns that are never real human communication
