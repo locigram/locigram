@@ -5,7 +5,7 @@ import type { SessionMemory } from './types'
 export const MIN_WORDS = 50
 
 /**
- * Convert an LLM session into a RawMemory for ingestion.
+ * Convert an OpenClaw session into a RawMemory for ingestion.
  * Returns null if the summary is too short (< MIN_WORDS).
  */
 export function formatSession(session: SessionMemory): RawMemory | null {
@@ -18,25 +18,25 @@ export function formatSession(session: SessionMemory): RawMemory | null {
     sourceRef: `openclaw:session:${session.sessionKey}`,
     occurredAt: session.occurredAt,
     metadata: {
-      session_key: session.sessionKey,
+      session_key:   session.sessionKey,
       session_label: session.sessionLabel,
       message_count: session.messageCount,
       duration_mins: session.durationMins,
-      participants: session.participants,
+      participants:  session.participants,
     },
     preClassified: {
-      locus: 'agent/openclaw',
-      entities: [],
+      locus:       'agent/openclaw',
+      entities:    [],
       isReference: false,
-      importance: 'normal',
-      clientId: session.clientId ?? undefined,
+      importance:  'normal',
+      clientId:    session.clientId ?? undefined,
     },
   }
 }
 
 /** Push-only connector — data is pushed via formatSession() */
 export const plugin: ConnectorPlugin = {
-  name: 'llm-session',
+  name: 'openclaw',
 
   validate(config: unknown): config is Record<string, unknown> {
     return typeof config === 'object' && config !== null

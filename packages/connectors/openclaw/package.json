@@ -1,5 +1,5 @@
 {
-  "name": "@locigram/connector-llm-session",
+  "name": "@locigram/connector-openclaw",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",
