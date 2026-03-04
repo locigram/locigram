@@ -1,5 +1,6 @@
 import { graphGet } from './auth'
 import type { RawMemory } from '@locigram/core'
+import { shouldSkipEmail, SKIP_EMAIL_FOLDERS } from './filters'
 
 // All fields we pull from the Graph API per message
 const SELECT = [

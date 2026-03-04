@@ -147,7 +147,16 @@ MCP: `http://localhost:3000/mcp`
 Connectors pull from external sources and feed locigrams into your palace.  
 **They auto-register at startup** — just set the env vars for the ones you have. Leave the rest blank or absent.
 
-### Microsoft 365 (email + Teams)
+> **Noise filtering is built in.** Every connector filters spam, automated messages, bot traffic, and low-content records before anything reaches the LLM. Junk folder emails, Teams bot messages, marketing newsletters, OTP codes, and one-word chat replies are all dropped at the source.
+
+---
+
+### Microsoft 365 — Email
+
+**What it ingests:** Email from one or more M365 mailboxes. Drafts, sent items, junk, deleted items, and automated messages (noreply, newsletters, OTP codes, calendar accept/decline) are automatically filtered out.
+
+**How it works:** Incremental sync using the Graph API delta link. Each email is run through LLM extraction to pull entities, locus, client_id, and importance.
+
 ```env
 LOCIGRAM_M365_TENANT_ID=your-tenant-id
 LOCIGRAM_M365_CLIENT_ID=your-client-id
@@ -155,34 +164,159 @@ LOCIGRAM_M365_CLIENT_SECRET=your-client-secret
 LOCIGRAM_M365_MAILBOXES=you@company.com,support@company.com
 ```
 
-### HaloPSA (support tickets)
+**Required Azure app registration permissions (Microsoft Graph — Application):**
+
+| Permission | Why |
+|-----------|-----|
+| `Mail.Read` | Read messages from configured mailboxes |
+| `User.Read.All` | Resolve sender/recipient display names |
+
+> Grant **Application** (not delegated) permissions so the connector runs as a service account without a logged-in user. After granting, an admin must click **Grant admin consent** in the Azure portal.
+
+---
+
+### Microsoft 365 — Teams Chat
+
+**What it ingests:** Channel messages from configured Teams channels. Individual messages are **grouped by reply thread**, and the full thread is sent to the LLM as a single unit once the thread goes quiet (2 hours with no new replies).
+
+**Why thread-based?** A single message like "OK sounds good" is meaningless. The reply chain "Acme Corp firewall throwing alerts → blocked the IP → resolved, customer notified" is a complete locigram. Splitting it loses the context.
+
+**Filters applied:** Bot/webhook messages, system events, pure acknowledgement messages ("ok", "thanks", "👍"), and threads under 20 total words are all dropped.
+
+```env
+# Same credentials as email — no additional vars needed
+LOCIGRAM_M365_TENANT_ID=your-tenant-id
+LOCIGRAM_M365_CLIENT_ID=your-client-id
+LOCIGRAM_M365_CLIENT_SECRET=your-client-secret
+# Teams channels are configured in your palace config, not env vars
+```
+
+**Required Azure app registration permissions (Microsoft Graph — Application):**
+
+| Permission | Why |
+|-----------|-----|
+| `ChannelMessage.Read.All` | Read channel messages and replies |
+| `Team.ReadBasic.All` | List teams and channels |
+| `User.Read.All` | Resolve participant display names |
+
+> **Note:** `ChannelMessage.Read.All` is a protected permission and requires Microsoft to review and approve your app for production use. For personal/internal use, enable it under your own tenant — it does not require external review.
+
+---
+
+### HaloPSA
+
+**What it ingests:** Support tickets — title, description, notes, resolution. Assets and contracts are ingested as **reference data** (stable facts that don't decay).
+
+**Filters applied:** Internal-only test tickets, closed tickets with no notes, and auto-generated system tickets are skipped.
+
 ```env
 LOCIGRAM_HALOPSA_URL=https://yourinstance.halopsa.com
 LOCIGRAM_HALOPSA_CLIENT_ID=your-client-id
 LOCIGRAM_HALOPSA_CLIENT_SECRET=your-client-secret
 ```
 
-### NinjaOne (devices + alerts)
+**Required HaloPSA API permissions:**
+
+| Scope | Why |
+|-------|-----|
+| `read:tickets` | Read ticket list, details, and notes |
+| `read:assets` | Read asset inventory (ingested as reference) |
+| `read:contracts` | Read contracts and SLAs (ingested as reference) |
+| `read:clients` | Resolve client names and IDs |
+
+> In HaloPSA: **Admin → Integrations → API → New Application**. Set grant type to `client_credentials`. Assign the scopes above.
+
+---
+
+### NinjaOne
+
+**What it ingests:** Devices and alerts. **All device records are ingested as reference data** (`is_reference = true`) — they're stable facts about what exists, not events.
+
 ```env
 LOCIGRAM_NINJA_CLIENT_ID=your-client-id
 LOCIGRAM_NINJA_CLIENT_SECRET=your-client-secret
 ```
 
+**Required NinjaOne API permissions:**
+
+| Permission | Why |
+|-----------|-----|
+| `Monitoring` | Read device status and alerts |
+| `Management` | Read device inventory and details |
+| `Reporting` | Read organization/client rollup data |
+
+> In NinjaOne: **Administration → Apps → API → Add**. Set application type to `API Services (machine-to-machine)`. Assign the scopes above. NinjaOne uses client credentials flow — no redirect URI needed.
+
+---
+
 ### Gmail
+
+**What it ingests:** Email from a Gmail account. Same noise filters as M365 email — spam, promotions, OTP codes, automated notifications, and very short messages are filtered out.
+
+**How it works:** Uses the Gmail API with incremental sync via `historyId`. Requires a refresh token obtained via OAuth2 consent flow.
+
 ```env
 LOCIGRAM_GMAIL_CLIENT_ID=your-client-id
 LOCIGRAM_GMAIL_CLIENT_SECRET=your-client-secret
 LOCIGRAM_GMAIL_REFRESH_TOKEN=your-refresh-token
 ```
 
+**Required Google Cloud OAuth2 scopes:**
+
+| Scope | Why |
+|-------|-----|
+| `https://www.googleapis.com/auth/gmail.readonly` | Read messages and labels |
+
+> In Google Cloud Console: create an **OAuth 2.0 Client ID** (desktop app type). Run a one-time OAuth consent flow to obtain the refresh token — tools like [`gcloud`](https://cloud.google.com/sdk) or [`google-auth-library`](https://github.com/googleapis/google-auth-library-nodejs) can do this. Store the refresh token — it stays valid until revoked.
+
+---
+
+### QuickBooks Online
+
+**What it ingests:** Invoices, customer payments, vendor bills, and time activities. Financial records are **pre-classified** — exact dollar amounts are stored in JSONB metadata and never passed through the LLM, eliminating any risk of the model paraphrasing a dollar figure incorrectly.
+
+**LLM extraction is skipped for financial data.** Entities, locus, and classification are set directly from QBO's structured data. The LLM is only involved if you push QBO data via webhook manually.
+
+**Classification:**
+- Invoices and vendor bills → `is_reference = true` (stable transaction facts)
+- Customer payments and time activities → `is_reference = false` (events, feed truth engine)
+- Line items are classified as `recurring` (MRR — endpoints, security, backup, M365) vs `project` based on item name patterns
+
+```env
+LOCIGRAM_QBO_CLIENT_ID=your-client-id
+LOCIGRAM_QBO_CLIENT_SECRET=your-client-secret
+LOCIGRAM_QBO_REALM_ID=your-company-id          # from QBO URL: ?realmId=XXXXXXX
+LOCIGRAM_QBO_REFRESH_TOKEN=your-refresh-token
+LOCIGRAM_QBO_ACCESS_TOKEN=                     # optional — auto-refreshed
+LOCIGRAM_QBO_MINOR_VERSION=                    # optional — e.g. 65
+```
+
+**Required Intuit developer app scopes:**
+
+| Scope | Why |
+|-------|-----|
+| `com.intuit.quickbooks.accounting` | Read invoices, payments, bills, time activities |
+
+> In the [Intuit Developer Portal](https://developer.intuit.com): create an app, select **QuickBooks Online and Payments**, enable the accounting scope. Generate a refresh token via the OAuth2 playground or a one-time consent flow. Refresh tokens expire after 100 days of inactivity — keep them warm with periodic syncs.
+
+---
+
 ### Webhook (always enabled)
-Push any content directly:
+
+Push any content directly — no connector setup required. Use this for LLM session summaries, manual notes, or any source without a dedicated connector.
+
 ```bash
-curl -X POST http://localhost:3000/api/webhook/push \
+curl -X POST http://localhost:3000/api/webhook/ingest \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"content": "Alice from Acme called about the renewal", "sourceType": "manual"}'
+  -d '{
+    "content": "Alice from Acme called about the renewal. She wants to add 5 seats.",
+    "sourceType": "manual",
+    "metadata": { "client_id": "acme" }
+  }'
 ```
+
+**sourceType options:** `email` · `chat` · `sms` · `call` · `ticket` · `device` · `calendar` · `contact` · `invoice` · `payment` · `bill` · `vendor-payment` · `timesheet` · `contract` · `llm-session` · `note` · `manual` · `webhook` · `system`
 
 ---
 
@@ -231,6 +365,12 @@ curl -X POST http://localhost:3000/api/webhook/push \
 | `LOCIGRAM_GMAIL_CLIENT_ID` | Gmail | OAuth2 client ID |
 | `LOCIGRAM_GMAIL_CLIENT_SECRET` | Gmail | OAuth2 client secret |
 | `LOCIGRAM_GMAIL_REFRESH_TOKEN` | Gmail | OAuth2 refresh token |
+| `LOCIGRAM_QBO_CLIENT_ID` | QuickBooks Online | Intuit app client ID |
+| `LOCIGRAM_QBO_CLIENT_SECRET` | QuickBooks Online | Intuit app client secret |
+| `LOCIGRAM_QBO_REALM_ID` | QuickBooks Online | Company ID (from QBO URL) |
+| `LOCIGRAM_QBO_REFRESH_TOKEN` | QuickBooks Online | OAuth2 refresh token |
+| `LOCIGRAM_QBO_ACCESS_TOKEN` | QuickBooks Online | _(optional)_ — auto-refreshed |
+| `LOCIGRAM_QBO_MINOR_VERSION` | QuickBooks Online | _(optional)_ API minor version |
 
 ---
 
@@ -249,10 +389,22 @@ curl -X POST http://localhost:3000/api/webhook/push \
 ```
 
 - **Postgres** — structured storage (locigrams, truths, entities, sources)
-- **Qdrant** — vector search for semantic recall
+- **Qdrant** — vector search for semantic recall (hot + warm tier only; cold = Postgres-only)
 - **Pipeline** — ingests raw content, calls LLM to extract entities + memory units
 - **Truth engine** — promotes repeated facts into truths with confidence scores
 - **Connectors** — pull from external sources; auto-activated by env vars
+
+**Two ingestion paths:**
+
+| Path | When to use | LLM extraction |
+|------|-------------|----------------|
+| Standard | Unstructured content (emails, chat, tickets) | ✅ Yes — entities, locus, classification extracted by LLM |
+| `preClassified` | Structured data (financial records, device inventory, contacts) | ❌ Skipped — connector sets entities/locus/classification directly from source data |
+
+The `preClassified` path exists because structured data (a QBO invoice, a NinjaOne device record) is already perfectly categorized — running it through an LLM adds latency, cost, and introduces transcription risk (e.g. the LLM paraphrasing `$7,500.00` as "around $7,500").
+
+**Noise filtering is applied before either path:**  
+Each connector filters its own source-specific noise — spam folders, bot messages, automated notifications, OTP codes, marketing emails, sub-20-word chat threads — before content ever reaches the pipeline.
 
 ---
 
