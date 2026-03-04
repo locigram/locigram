@@ -7,6 +7,8 @@
     "@locigram/core": "workspace:*",
     "zod": "latest",
     "hono": "latest",
-    "@hono/zod-validator": "latest"
+    "@hono/zod-validator": "latest",
+    "@locigram/pipeline": "workspace:*",
+    "@locigram/db": "workspace:*"
   }
 }
