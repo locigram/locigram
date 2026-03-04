@@ -17,10 +17,11 @@ function findNewestJsonl(sessionsDir: string): string | null {
     .filter(f => f.endsWith('.jsonl'))
     .map(f => {
       const stat = fs.statSync(path.join(sessionsDir, f))
-      return { name: f, birthtime: stat.birthtimeMs, size: stat.size }
+      return { name: f, mtime: stat.mtimeMs, size: stat.size }
     })
-    // Sort by creation time (newest first) — NOT mtime, which changes when OpenClaw touches old files
-    .sort((a, b) => b.birthtime - a.birthtime)
+    // The active session is the largest file — OpenClaw accumulates messages in a single file.
+    // Sorting by mtime causes flipping (OpenClaw touches old files). Size is the stable signal.
+    .sort((a, b) => b.size - a.size)
   return files.length > 0 ? path.join(sessionsDir, files[0].name) : null
 }
 
