@@ -13,16 +13,29 @@ interface AgentState {
 
 function findNewestJsonl(sessionsDir: string): string | null {
   if (!fs.existsSync(sessionsDir)) return null
+  const now = Date.now()
+  const ACTIVE_WINDOW_MS = 10 * 60 * 1000  // 10 minutes = "recently active"
+  const MIN_SIZE = 1000  // ignore tiny stub files
+
   const files = fs.readdirSync(sessionsDir)
     .filter(f => f.endsWith('.jsonl'))
     .map(f => {
       const stat = fs.statSync(path.join(sessionsDir, f))
       return { name: f, mtime: stat.mtimeMs, size: stat.size }
     })
-    // The active session is the largest file — OpenClaw accumulates messages in a single file.
-    // Sorting by mtime causes flipping (OpenClaw touches old files). Size is the stable signal.
-    .sort((a, b) => b.size - a.size)
-  return files.length > 0 ? path.join(sessionsDir, files[0].name) : null
+
+  // Prefer files modified in the last 10 min with real content — pick the largest among those
+  const recentlyActive = files.filter(f => f.size >= MIN_SIZE && (now - f.mtime) < ACTIVE_WINDOW_MS)
+  if (recentlyActive.length > 0) {
+    recentlyActive.sort((a, b) => b.mtime - a.mtime)  // most recently touched among active
+    return path.join(sessionsDir, recentlyActive[0].name)
+  }
+
+  // Fall back to largest file if nothing recently active
+  const nonStubs = files.filter(f => f.size >= MIN_SIZE)
+  if (nonStubs.length === 0) return null
+  nonStubs.sort((a, b) => b.size - a.size)
+  return path.join(sessionsDir, nonStubs[0].name)
 }
 
 function extractSessionId(filePath: string): string {
