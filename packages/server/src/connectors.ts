@@ -71,5 +71,26 @@ export function autoRegisterConnectors() {
     }).catch(e => console.warn('[connectors] gmail load failed:', e))
   }
 
+  // ── QuickBooks Online ─────────────────────────────────────────────────────
+  // Required: LOCIGRAM_QBO_CLIENT_ID, LOCIGRAM_QBO_CLIENT_SECRET,
+  //           LOCIGRAM_QBO_REALM_ID, LOCIGRAM_QBO_REFRESH_TOKEN
+  if (process.env.LOCIGRAM_QBO_CLIENT_ID &&
+      process.env.LOCIGRAM_QBO_CLIENT_SECRET &&
+      process.env.LOCIGRAM_QBO_REALM_ID   &&
+      process.env.LOCIGRAM_QBO_REFRESH_TOKEN) {
+    import('@locigram/connector-qbo').then(({ qboPlugin }) => {
+      registry.register(qboPlugin.create({
+        clientId:     process.env.LOCIGRAM_QBO_CLIENT_ID!,
+        clientSecret: process.env.LOCIGRAM_QBO_CLIENT_SECRET!,
+        realmId:      process.env.LOCIGRAM_QBO_REALM_ID!,
+        refreshToken: process.env.LOCIGRAM_QBO_REFRESH_TOKEN!,
+        accessToken:  process.env.LOCIGRAM_QBO_ACCESS_TOKEN,
+        baseUrl:      process.env.LOCIGRAM_QBO_BASE_URL,
+        minorVersion: process.env.LOCIGRAM_QBO_MINOR_VERSION,
+      }))
+      console.log('[connectors] ✓ qbo')
+    }).catch(e => console.warn('[connectors] qbo load failed:', e))
+  }
+
   return registry
 }

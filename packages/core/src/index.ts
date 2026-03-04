@@ -24,7 +24,11 @@ export type SourceType =
   | 'device'         // device inventory / alerts (NinjaOne)
   | 'calendar'       // calendar events and meetings
   | 'contact'        // contact records (CRM, M365 contacts)
-  | 'invoice'        // billing / financial records
+  | 'invoice'        // customer invoices (QBO)
+  | 'payment'        // payments received from customers (QBO)
+  | 'bill'           // vendor bills / payables (QBO)
+  | 'vendor-payment' // payments made to vendors (QBO)
+  | 'timesheet'      // billable time activities (QBO)
   | 'contract'       // contracts, SLAs, agreements
   // AI / Session
   | 'llm-session'    // extracted from AI conversation sessions
@@ -87,8 +91,20 @@ export interface RawMemory {
   content:    string
   sourceType: SourceType
   sourceRef?: string
-  occurredAt?: Date           // when the event happened in the source system (optional — manual/webhook may not have it)
-  metadata?:  Record<string, unknown>
+  occurredAt?: Date                      // when the event happened in source system
+  metadata?:   Record<string, unknown>
+
+  // Pre-classification — set by connectors that already have structured data.
+  // When set, the pipeline skips LLM extraction and uses these values directly.
+  // Use for financial records, device inventory, contacts — anything already structured.
+  preClassified?: {
+    locus:         string
+    entities:      string[]              // resolved entity names
+    isReference:   boolean
+    referenceType?: string
+    importance?:   'low' | 'normal' | 'high'
+    clientId?:     string
+  }
 }
 
 export interface Connector {

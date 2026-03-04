@@ -40,7 +40,17 @@ export async function ingest(
       }
 
       // 2. Extract locigrams + entities from raw text
-      const extraction = await extractFromRaw(raw, config)
+      // Skip LLM extraction for pre-classified structured data (financial records, devices, contacts)
+      const extraction = raw.preClassified
+        ? {
+            entities:      raw.preClassified.entities.map(name => ({ name, type: 'org' as const, aliases: [] })),
+            locus:         raw.preClassified.locus,
+            is_reference:  raw.preClassified.isReference,
+            isReference:   raw.preClassified.isReference,
+            referenceType: raw.preClassified.referenceType ?? null,
+            locigrams:     [{ content: raw.content, confidence: 1.0 }],
+          }
+        : await extractFromRaw(raw, config)
 
       // 3. Resolve entities (match or create in DB)
       const resolvedEntities = await resolveEntities(db, config.palaceId, extraction.entities)
@@ -63,8 +73,8 @@ export async function ingest(
           connector,
           occurredAt:    raw.occurredAt ?? null,
           locus:         extraction.locus,
-          clientId:      (raw.metadata?.client_id as string | undefined) ?? null,
-          importance:    normalizeImportance(raw.metadata?.importance as string | undefined),
+          clientId:      raw.preClassified?.clientId ?? (raw.metadata?.client_id as string | undefined) ?? null,
+          importance:    raw.preClassified?.importance ?? normalizeImportance(raw.metadata?.importance as string | undefined),
           tier:          'hot',
           isReference:   extraction.isReference ?? false,
           referenceType: extraction.referenceType ?? null,
