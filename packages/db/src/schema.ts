@@ -75,6 +75,9 @@ export const locigrams = pgTable(
     // Vector
     embeddingId: text('embedding_id'),            // Qdrant point ID; null = pending embed
 
+    // Graph sync
+    graphSyncedAt: timestamp('graph_synced_at', { withTimezone: true }),  // null = pending graph write
+
     // Access scoring (memory intelligence)
     accessCount:      integer('access_count').notNull().default(0),
     lastAccessedAt:   timestamp('last_accessed_at', { withTimezone: true }),
@@ -94,6 +97,7 @@ export const locigrams = pgTable(
     index('locigrams_connector_idx').on(t.palaceId, t.connector),
     index('locigrams_client_id_idx').on(t.palaceId, t.clientId),
     index('locigrams_tier_idx').on(t.palaceId, t.tier),
+    index('locigrams_graph_synced_idx').on(t.palaceId, t.graphSyncedAt),
     index('locigrams_is_reference_idx').on(t.palaceId, t.isReference),
     index('locigrams_reference_type_idx').on(t.palaceId, t.referenceType),
 

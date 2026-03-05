@@ -3,6 +3,7 @@
  * Usage: MEMGRAPH_URL=bolt://10.10.100.80:30313 DATABASE_URL=<url> bun run packages/server/src/graph/migrate-to-graph.ts
  */
 import { createDb, locigrams } from '@locigram/db'
+import { eq } from 'drizzle-orm'
 import { writeMemoryToGraph, parseAgentFromLocus } from './graph-write'
 import { getGraphDriver } from './graph-client'
 
@@ -29,6 +30,7 @@ async function migrate() {
         occurredAt: r.occurredAt ?? r.createdAt,
         connector: r.connector,
       })
+      await db.update(locigrams).set({ graphSyncedAt: new Date() }).where(eq(locigrams.id, r.id))
       success++
       if (success % 50 === 0) console.log(`  ${success}/${records.length}...`)
     } catch (e) {

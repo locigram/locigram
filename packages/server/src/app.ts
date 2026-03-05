@@ -5,6 +5,7 @@ import { createDb, locigrams } from '@locigram/db'
 import { eq } from 'drizzle-orm'
 import { createVectorClient, ensureCollection, embed, searchSimilar } from '@locigram/vector'
 import { startEmbedWorker, defaultPipelineConfig, runNoiseAssessment } from '@locigram/pipeline'
+import { startGraphWorker } from './graph/graph-worker'
 import type { PipelineConfig, LLMConfig } from '@locigram/pipeline'
 import { startTruthEngine, runSweep } from '@locigram/truth'
 import { buildWebhookRoute } from '@locigram/connector-webhook'
@@ -79,6 +80,7 @@ export function createApp(config: AppConfig) {
 
   // Start background embed worker (every 30s)
   const stopWorker = startEmbedWorker(db, vectorClient, config.palaceId, 30_000)
+  const stopGraphWorker = startGraphWorker(db, config.palaceId, 30_000)
 
   // Start truth engine (every 6 hours)
   const stopTruth = startTruthEngine(db, {
@@ -243,29 +245,7 @@ export function createApp(config: AppConfig) {
     const { ingest } = await import('@locigram/pipeline')
     const result = await ingest([raw], db, pipelineConfig)
 
-    // Fire-and-forget graph write — fetch real UUID then write to Memgraph
-    if (result.stored > 0) {
-      const { writeMemoryToGraph } = await import('./graph/graph-write')
-      db.select({ id: locigrams.id })
-        .from(locigrams)
-        .where(eq(locigrams.sourceRef, snapshotRef))
-        .limit(1)
-        .then(([row]) => {
-          if (!row) return
-          return writeMemoryToGraph({
-            id: row.id,
-            palaceId: palace.id,
-            locus: agentLocus,
-            sourceType: 'llm-session',
-            agentName,
-            sessionId,
-            importance: 'normal',
-            occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
-            connector: 'locigram-session-monitor',
-          })
-        })
-        .catch(e => console.warn('[graph] ingest write failed:', e))
-    }
+    // Graph write handled by graph-worker (polls graphSyncedAt IS NULL every 30s)
 
     return c.json(result)
   })
@@ -289,7 +269,7 @@ export function createApp(config: AppConfig) {
   // Cleanup on shutdown
   const originalFetch = app.fetch.bind(app)
   return Object.assign(app, {
-    stop: () => { stopWorker(); stopTruth(); stopSweep?.() },
+    stop: () => { stopWorker(); stopGraphWorker(); stopTruth(); stopSweep?.() },
     fetch: originalFetch,
   })
 }
