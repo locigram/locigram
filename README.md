@@ -643,7 +643,35 @@ Auto-maintained structured JSON state written alongside each handoff dump. Never
 
 ### Locus hierarchy
 
-Agent data is organized hierarchically:
+All memories are organized into a consistent namespace hierarchy. The `locus` field controls where a memory lives and is auto-scoped based on how the write originates:
+
+| Source | Auto-scoped locus | How it's set |
+|--------|-------------------|-------------|
+| External LLM (ChatGPT, Claude.ai, Gemini…) | `sessions/<service>` | OAuth client has `service` field; middleware resolves it per-request |
+| Internal sync connector (obsidian-sync, secondbrain-sync…) | `connectors/<connector>` | Pass `connector=<name>` + `sourceType=sync` in `memory_remember` |
+| OpenClaw agent session | `agent/<name>/session/<id>` | Session monitor sets locus via `POST /api/sessions/ingest` |
+| Manual / agent notes | `notes/decisions`, `notes/infrastructure`, etc. | Caller sets explicit locus |
+
+**Auto-scoping rules in `memory_remember`:**
+- If `service` is set + `sourceType=llm-session` + locus is default → `sessions/<service>`
+- If `connector` is set + `sourceType=sync` + locus is default → `connectors/<connector>`
+- Otherwise locus is used exactly as passed (or `personal/general` if omitted)
+
+**Deleting content by source — exact SQL:**
+```sql
+-- Remove all memories from a specific LLM service
+DELETE FROM locigrams WHERE locus LIKE 'sessions/chatgpt%';
+DELETE FROM locigrams WHERE locus LIKE 'sessions/claude%';
+
+-- Remove all memories from a specific sync connector
+DELETE FROM locigrams WHERE locus = 'connectors/obsidian-sync';
+DELETE FROM locigrams WHERE locus = 'connectors/secondbrain-sync';
+
+-- Remove all agent memories for a specific agent
+DELETE FROM locigrams WHERE locus LIKE 'agent/main%';
+```
+
+Agent-specific loci:
 
 | Locus | Written by | Purpose |
 |-------|-----------|---------|
@@ -978,6 +1006,9 @@ Truth engine (every 6h, knowledge only)
 | `@locigram/registry` | Connector plugin registry |
 | `@locigram/connector-*` | Data source connectors |
 | `packages/connectors/session-monitor` | OpenClaw session monitor daemon — watches agent JSONL files, generates handoff summaries, pushes to Locigram via `POST /api/sessions/ingest`. Supports dynamic agent discovery, concurrent multi-session tracking, fleet status, heartbeats. |
+| `packages/connectors/secondbrain-sync` | Nightly K8s CronJob (3am). Synthesizes SuruDB business data (clients, tickets, devices, invoices, people) into Locigram memories. Locus: `connectors/secondbrain-sync`. |
+| `packages/connectors/obsidian-audit` | Weekly LaunchAgent (Sunday 2am, macOS only — requires local vault access). Scans Obsidian vault, uses LLM to evaluate each note for indexing worthiness, writes approved list to `~/.locigram/obsidian-index.json`. |
+| `packages/connectors/obsidian-sync` | Nightly LaunchAgent (4am, macOS only). Reads approved index from obsidian-audit, summarizes changed notes via LLM, upserts to Locigram with Obsidian deep link for full-content retrieval. Locus: `connectors/obsidian-sync`. |
 
 ## Deploying on Kubernetes
 
