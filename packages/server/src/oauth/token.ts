@@ -27,7 +27,18 @@ tokenRoute.post('/', async (c) => {
   if (grantType !== 'authorization_code') {
     throw new HTTPException(400, { message: 'grant_type must be "authorization_code"' })
   }
-  if (!code || !redirectUri || !clientId || !clientSecret) {
+  // Also check Basic auth header
+  let resolvedClientId = clientId
+  let resolvedClientSecret = clientSecret
+  const authHeader = c.req.header('authorization') ?? ''
+  if (authHeader.startsWith('Basic ')) {
+    const decoded = Buffer.from(authHeader.slice(6), 'base64').toString()
+    const [hId, hSecret] = decoded.split(':')
+    if (!resolvedClientId) resolvedClientId = decodeURIComponent(hId ?? '')
+    if (!resolvedClientSecret) resolvedClientSecret = decodeURIComponent(hSecret ?? '')
+  }
+
+  if (!code || !redirectUri || !resolvedClientId || !resolvedClientSecret) {
     throw new HTTPException(400, { message: 'code, redirect_uri, client_id, and client_secret are required' })
   }
 
@@ -35,14 +46,14 @@ tokenRoute.post('/', async (c) => {
   const [client] = await db
     .select()
     .from(oauthClients)
-    .where(and(eq(oauthClients.id, clientId), isNull(oauthClients.revokedAt)))
+    .where(and(eq(oauthClients.id, resolvedClientId), isNull(oauthClients.revokedAt)))
     .limit(1)
 
   if (!client) {
     throw new HTTPException(401, { message: 'Invalid client_id or client revoked' })
   }
 
-  const secretValid = await bcrypt.compare(clientSecret, client.secretHash)
+  const secretValid = await bcrypt.compare(resolvedClientSecret, client.secretHash)
   if (!secretValid) {
     throw new HTTPException(401, { message: 'Invalid client_secret' })
   }
@@ -66,7 +77,7 @@ tokenRoute.post('/', async (c) => {
     throw new HTTPException(400, { message: 'Authorization code expired' })
   }
 
-  if (authCode.clientId !== clientId) {
+  if (authCode.clientId !== resolvedClientId) {
     throw new HTTPException(400, { message: 'Code was not issued to this client' })
   }
 

@@ -50,31 +50,28 @@ authorizeRoute.get('/', async (c) => {
     throw new HTTPException(400, { message: 'redirect_uri not registered for this client' })
   }
 
-  if (codeChallenge && codeChallengeMethod !== 'S256') {
-    throw new HTTPException(400, { message: 'Only S256 code_challenge_method is supported' })
+  if (codeChallenge && codeChallengeMethod !== 'S256' && codeChallengeMethod !== 'plain') {
+    throw new HTTPException(400, { message: 'Unsupported code_challenge_method' })
   }
 
-  const html = `<!DOCTYPE html>
-<html>
-<head><title>Authorize ${escapeHtml(client.name)}</title>
-<style>body{font-family:sans-serif;max-width:400px;margin:80px auto;padding:20px}
-.btn{padding:10px 24px;border:none;border-radius:6px;cursor:pointer;font-size:16px;margin:8px}
-.approve{background:#2563eb;color:#fff} .deny{background:#e5e7eb;color:#333}</style></head>
-<body>
-<h2>${escapeHtml(palace.name)}</h2>
-<p><strong>${escapeHtml(client.name)}</strong> is requesting access to your Locigram memory palace.</p>
-<form method="POST" action="/oauth/authorize">
-  <input type="hidden" name="client_id" value="${escapeHtml(clientId)}">
-  <input type="hidden" name="redirect_uri" value="${escapeHtml(redirectUri)}">
-  <input type="hidden" name="state" value="${escapeHtml(state)}">
-  <input type="hidden" name="code_challenge" value="${escapeHtml(codeChallenge)}">
-  <input type="hidden" name="code_challenge_method" value="S256">
-  <button class="btn approve" name="action" value="approve">Approve</button>
-  <button class="btn deny" name="action" value="deny">Deny</button>
-</form>
-</body></html>`
+  // Auto-approve: generate code and redirect immediately
+  // (Private server — no interactive consent needed)
+  const code = crypto.randomBytes(32).toString('hex')
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
 
-  return c.html(html)
+  await db.insert(oauthCodes).values({
+    code,
+    clientId,
+    redirectUri,
+    palaceId: palace.id,
+    codeChallenge: codeChallenge || null,
+    expiresAt,
+  })
+
+  const redirect = new URL(redirectUri)
+  redirect.searchParams.set('code', code)
+  if (state) redirect.searchParams.set('state', state)
+  return c.redirect(redirect.toString())
 })
 
 // POST /oauth/authorize — handle approval/denial

@@ -25,6 +25,7 @@ import { metadataRoute, protectedResourceRoute } from './oauth/metadata'
 import { clientsRoute } from './oauth/clients'
 import { authorizeRoute } from './oauth/authorize'
 import { tokenRoute } from './oauth/token'
+import { registerRoute } from './oauth/register'
 import { activeContextRoute, fleetRoute, heartbeatRoute } from './routes/context'
 
 export interface AppConfig {
@@ -124,6 +125,7 @@ export function createApp(config: AppConfig) {
   app.route('/.well-known/oauth-protected-resource', protectedResourceRoute)
   app.route('/oauth/authorize', authorizeRoute)
   app.route('/oauth/token', tokenRoute)
+  app.route('/oauth/register', registerRoute)
 
   // ── OAuth client management (protected by palace api_token) ───────────────
   app.route('/oauth/clients', clientsRoute)
