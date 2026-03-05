@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import { cors } from 'hono/cors'
-import { createDb } from '@locigram/db'
+import { createDb, locigrams } from '@locigram/db'
+import { eq } from 'drizzle-orm'
 import { createVectorClient, ensureCollection, embed, searchSimilar } from '@locigram/vector'
 import { startEmbedWorker, defaultPipelineConfig, runNoiseAssessment } from '@locigram/pipeline'
 import type { PipelineConfig, LLMConfig } from '@locigram/pipeline'
@@ -241,6 +242,30 @@ export function createApp(config: AppConfig) {
 
     const { ingest } = await import('@locigram/pipeline')
     const result = await ingest([raw], db, pipelineConfig)
+
+    // Fire-and-forget graph write — fetch real UUID then write to Memgraph
+    if (result.stored > 0) {
+      const { writeMemoryToGraph } = await import('./graph/graph-write')
+      db.select({ id: locigrams.id })
+        .from(locigrams)
+        .where(eq(locigrams.sourceRef, snapshotRef))
+        .limit(1)
+        .then(([row]) => {
+          if (!row) return
+          return writeMemoryToGraph({
+            id: row.id,
+            palaceId: palace.id,
+            locus: agentLocus,
+            sourceType: 'llm-session',
+            agentName,
+            sessionId,
+            importance: 'normal',
+            occurredAt: occurredAt ? new Date(occurredAt) : new Date(),
+            connector: 'locigram-session-monitor',
+          })
+        })
+        .catch(e => console.warn('[graph] ingest write failed:', e))
+    }
 
     return c.json(result)
   })
