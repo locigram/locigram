@@ -171,15 +171,21 @@ export function createApp(config: AppConfig) {
         },
         body: JSON.stringify({
           model,
-          messages: [{ role: 'user', content: wrappedPrompt + ' /no_think' }],
-          max_tokens: maxTokens ?? 1200,
+          messages: [
+            { role: 'system', content: 'You are a concise summarizer. Output only your final answer — no thinking process, no preamble, no meta-commentary.' },
+            { role: 'user', content: wrappedPrompt + ' /no_think' },
+          ],
+          max_tokens: maxTokens ?? 2500,
         }),
       })
 
       const text = await res.text()
       const parsed = JSON.parse(text)
       const content = parsed.choices?.[0]?.message?.content ?? ''
-      let cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+      let cleaned = content
+        .replace(/<think>[\s\S]*?<\/think>/g, '')          // strip <think> tags
+        .replace(/^Thinking Process:[\s\S]*?\n\n(?=\S)/m, '') // strip plain-text "Thinking Process:" blocks
+        .trim()
       // Strip plain-text thinking blocks (models that don't use <think> tags)
       const domainMarker = cleaned.indexOf('**Domain:**')
       if (domainMarker > 0) {
