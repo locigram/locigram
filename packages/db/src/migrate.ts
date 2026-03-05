@@ -70,6 +70,9 @@ await sql`
     -- Vector
     embedding_id   TEXT,                   -- Qdrant point ID (null = not yet embedded)
 
+    -- Graph sync
+    graph_synced_at TIMESTAMPTZ,           -- null = pending Memgraph write
+
     -- Access scoring (memory intelligence)
     access_count      INT         NOT NULL DEFAULT 0,
     last_accessed_at  TIMESTAMPTZ,
@@ -181,6 +184,7 @@ await sql`CREATE INDEX IF NOT EXISTS locigrams_occurred_at_idx           ON loci
 await sql`CREATE INDEX IF NOT EXISTS locigrams_created_at_idx            ON locigrams(palace_id, created_at)`
 await sql`CREATE INDEX IF NOT EXISTS locigrams_expires_at_idx            ON locigrams(expires_at) WHERE expires_at IS NOT NULL`
 await sql`CREATE INDEX IF NOT EXISTS locigrams_embedding_pending_idx     ON locigrams(palace_id) WHERE embedding_id IS NULL AND tier IN ('hot','warm')`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_graph_synced_idx          ON locigrams(palace_id, graph_synced_at)`
 
 // locigrams — access scoring
 await sql`CREATE INDEX IF NOT EXISTS locigrams_access_score_idx      ON locigrams(palace_id, access_score)`
