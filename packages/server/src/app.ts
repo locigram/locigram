@@ -272,7 +272,18 @@ export function createApp(config: AppConfig) {
     const palace = c.get('palace') as import('@locigram/db').Palace
     const oauthService = c.get('oauthService') as string | null ?? null
     const handler = getMcpHandler(palace, oauthService)
-    return handler(c.req.raw)
+
+    // Claude.ai sends Accept: application/json only — MCP SDK requires text/event-stream too.
+    // Patch the request headers so the transport doesn't 406.
+    let req = c.req.raw
+    const accept = req.headers.get('Accept') ?? ''
+    if (!accept.includes('text/event-stream')) {
+      const newHeaders = new Headers(req.headers)
+      newHeaders.set('Accept', accept ? `${accept}, text/event-stream` : 'application/json, text/event-stream')
+      req = new Request(req, { headers: newHeaders })
+    }
+
+    return handler(req)
   }
 
   app.all('/mcp/*', authMiddleware, handleMcp)

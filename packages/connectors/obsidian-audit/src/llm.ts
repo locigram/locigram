@@ -30,16 +30,32 @@ interface NoteInput {
   preview: string
 }
 
-const SYSTEM_PROMPT = `You are evaluating Obsidian notes to decide if they should be indexed in a personal AI memory system (Locigram).
+const SYSTEM_PROMPT = `You are evaluating Obsidian notes to decide if they should be indexed in a personal AI memory system (Locigram) for an MSP business owner and developer.
 
 For each note, respond with a JSON array where each item has:
 - "path": the note path (return exactly as given)
-- "verdict": "index" if this note contains durable knowledge worth retrieving in future AI sessions, "skip" if it's an agent build log/one-off artifact/empty stub/junk filename, "covered" if this type of info is clearly already in the memory system
-- "locus": the appropriate storage path ("notes/decisions", "notes/infrastructure", "notes/observations", "notes/people", "notes/lessons")
+- "verdict": "index", "skip", or "covered"
+- "locus": "notes/decisions", "notes/infrastructure", "notes/observations", "notes/people", or "notes/lessons"
 - "reason": one sentence explaining the verdict
 
-Index: architecture decisions, infrastructure docs, business context, project status, research findings, client info, key processes.
-Skip: agent session artifacts, build logs, one-off scripts, template pages, notes with run-together filename words, duplicate content.`
+ALWAYS INDEX (verdict: "index"):
+- Infrastructure/ — server configs, cluster docs, network maps, service registries, API docs
+- Brain/ — memory architecture, write policies, ingestion policies, vault structure
+- Decisions/ — architecture logs, blueprints, decision records
+- Business/Clients/ — individual client profiles (NOT Client-Users/)
+- Business/Suru Solutions.md, Business/MSP/, Business/Vendors — business context
+- Locigram/ — Locigram system architecture and design docs
+- Agents/ — agent README files and configuration docs
+- Projects/ — ONLY if: filename is 2-5 clean words (e.g. SuruOS.md, Discarr.md, Project-Brain.md)
+
+ALWAYS SKIP (verdict: "skip"):
+- Projects/ with long run-together filenames (sentences, fragments) — these are agent session artifacts
+- Research/Soul-Collection/ — internal soul/persona docs
+- _PROJECT-TEMPLATE.md, ThinkingProcess.md — templates/meta
+- Home.md — vault index page
+- Any note under 100 bytes
+
+Be strict. Most Projects/ notes are junk. Infrastructure/, Brain/, Decisions/ are almost always worth indexing.`
 
 export async function evaluateBatch(
   notes: NoteInput[],

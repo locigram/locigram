@@ -24,6 +24,10 @@ function shouldSkip(relPath: string, content: string, size: number): boolean {
   if (relPath.includes('archive/') || relPath.includes('retired/')) return true
   // Skip session-monitor stubs
   if (content.startsWith(JUNK_STUB)) return true
+  // Skip People/ entirely — auto-generated email contacts, covered by intel.people in SuruDB
+  if (relPath.startsWith('People/')) return true
+  // Skip Business/Client-Users/ — auto-generated team contact lists
+  if (relPath.startsWith('Business/Client-Users/')) return true
   return false
 }
 

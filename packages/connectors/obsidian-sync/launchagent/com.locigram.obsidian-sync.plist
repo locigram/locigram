@@ -21,7 +21,7 @@
         <key>LLM_URL</key>
         <string>http://10.10.100.80:30891/v1</string>
         <key>LLM_MODEL</key>
-        <string>qwen3.5-35b-a3b</string>
+        <string>qwen3.5-35b-a3b@4bit</string>
     </dict>
     <key>StartCalendarInterval</key>
     <dict>
