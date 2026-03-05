@@ -2,7 +2,7 @@ const MCP_URL = process.env.LOCIGRAM_MCP_URL ?? 'http://locigram-server.locigram
 const TOKEN = process.env.LOCIGRAM_TOKEN ?? ''
 
 let requestId = 0
-let initialized = false
+let sessionId: string | null = null
 
 interface JsonRpcResponse {
   jsonrpc: '2.0'
@@ -13,13 +13,16 @@ interface JsonRpcResponse {
 
 async function rpc(method: string, params: Record<string, unknown>): Promise<JsonRpcResponse> {
   const id = ++requestId
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json, text/event-stream',
+    ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+    ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
+  }
+
   const res = await fetch(MCP_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json, text/event-stream',
-      ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
-    },
+    headers,
     body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
     signal: AbortSignal.timeout(15_000),
   })
@@ -28,25 +31,41 @@ async function rpc(method: string, params: Record<string, unknown>): Promise<Jso
     throw new Error(`MCP HTTP ${res.status}: ${await res.text()}`)
   }
 
+  // Capture session ID from initialize response
+  const newSessionId = res.headers.get('mcp-session-id')
+  if (newSessionId) {
+    sessionId = newSessionId
+  }
+
   return (await res.json()) as JsonRpcResponse
 }
 
-async function ensureInitialized(): Promise<void> {
-  if (initialized) return
-  await rpc('initialize', {
+async function initialize(): Promise<void> {
+  sessionId = null // reset before new session
+  const res = await rpc('initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
     clientInfo: { name: 'secondbrain-sync', version: '0.1.0' },
   })
+  if (res.error) throw new Error(`MCP initialize failed: ${res.error.message}`)
   await rpc('notifications/initialized', {})
-  initialized = true
 }
 
 export async function rememberMemory(
   content: string,
-  _locus: string,  // kept for API compat but ignored — server auto-scopes to connectors/secondbrain-sync
+  _locus: string, // kept for API compat — server auto-scopes to connectors/secondbrain-sync
   sourceRef: string,
 ): Promise<void> {
+  // Initialize session on first call
+  if (!sessionId) {
+    try {
+      await initialize()
+    } catch (err) {
+      console.error(`[secondbrain-sync] MCP initialize failed: ${err}`)
+      return
+    }
+  }
+
   const params = {
     name: 'memory_remember',
     arguments: {
@@ -54,39 +73,22 @@ export async function rememberMemory(
       sourceType: 'sync',
       connector: 'secondbrain-sync',
       source_ref: sourceRef,
-      // locus omitted — server auto-scopes to connectors/secondbrain-sync
     },
   }
 
   try {
     const res = await rpc('tools/call', params)
     if (res.error) {
-      // If server requires initialize handshake, do it and retry
-      if (res.error.code === -32600 || res.error.message?.includes('initialize')) {
-        await ensureInitialized()
+      // Session expired — re-initialize and retry once
+      if (res.error.message?.includes('initialize') || res.error.message?.includes('not initialized')) {
+        await initialize()
         const retry = await rpc('tools/call', params)
-        if (retry.error) {
-          console.error(`[secondbrain-sync] MCP retry failed: ${retry.error.message}`)
-        }
-        return
+        if (retry.error) console.error(`[secondbrain-sync] MCP retry failed: ${retry.error.message}`)
+      } else {
+        console.error(`[secondbrain-sync] MCP error: ${res.error.message}`)
       }
-      console.error(`[secondbrain-sync] MCP error: ${res.error.message}`)
     }
   } catch (err) {
-    // Try initialize handshake and retry once
-    if (!initialized) {
-      try {
-        await ensureInitialized()
-        const retry = await rpc('tools/call', params)
-        if (retry.error) {
-          console.error(`[secondbrain-sync] MCP retry failed: ${retry.error.message}`)
-        }
-        return
-      } catch (retryErr) {
-        console.error(`[secondbrain-sync] MCP retry failed: ${retryErr}`)
-        return
-      }
-    }
     console.error(`[secondbrain-sync] MCP call failed: ${err}`)
   }
 }
