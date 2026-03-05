@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.locigram.obsidian-audit</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/bun</string>
+        <string>run</string>
+        <string>/Users/surubot/locigram/packages/connectors/obsidian-audit/src/index.ts</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OBSIDIAN_VAULT</key>
+        <string>/Users/surubot/sudobrain</string>
+        <key>LOCIGRAM_MCP_URL</key>
+        <string>http://10.10.100.82:30310/mcp</string>
+        <key>LOCIGRAM_TOKEN</key>
+        <string>e572d1f4292c724e7b896cf3a73acfd16efdfb045643c0fac798c8ce5a7c08a1</string>
+        <key>LLM_URL</key>
+        <string>http://10.10.100.80:30891/v1</string>
+        <key>LLM_MODEL</key>
+        <string>qwen3.5-35b-a3b</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/com.locigram.obsidian-audit.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/com.locigram.obsidian-audit.log</string>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
