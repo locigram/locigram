@@ -29,7 +29,7 @@ spec:
             - containerPort: 8080
           env:
             - name: GLINER_MODEL
-              value: "urchade/gliner_multitask-v0.5"
+              value: "knowledgator/gliner-multitask-large-v0.5"
           resources:
             requests:
               cpu: "500m"
