@@ -43,17 +43,17 @@ async function ensureInitialized(): Promise<void> {
 
 export async function rememberMemory(
   content: string,
-  locus: string,
+  _locus: string,  // kept for API compat but ignored — server auto-scopes to connectors/secondbrain-sync
   sourceRef: string,
 ): Promise<void> {
   const params = {
     name: 'memory_remember',
     arguments: {
       content,
-      locus,
       sourceType: 'sync',
       connector: 'secondbrain-sync',
       source_ref: sourceRef,
+      // locus omitted — server auto-scopes to connectors/secondbrain-sync
     },
   }
 

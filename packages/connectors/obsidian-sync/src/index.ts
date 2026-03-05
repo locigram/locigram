@@ -61,7 +61,7 @@ async function main() {
       const sourceRef = `obsidian:${entry.path}`
 
       // Upsert to Locigram
-      await upsertMemory(memoryContent, entry.locus, sourceRef)
+      await upsertMemory(memoryContent, sourceRef)
 
       // Update cursor
       cursor.synced[entry.path] = { mtime, locigramSourceRef: sourceRef }

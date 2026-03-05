@@ -49,28 +49,60 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
     },
 
     memory_remember: {
-      description: 'Store a new memory in the palace. When called from an external LLM service (Claude.ai, ChatGPT, Gemini, etc.), pass sourceType="llm-session" and service="<serviceName>" to automatically scope to the correct sessions/<service> locus.',
+      description: 'Store a new memory in the palace. When called from an external LLM service (Claude.ai, ChatGPT, Gemini, etc.), pass sourceType="llm-session" and service="<serviceName>" to automatically scope to the correct sessions/<service> locus. When called from an internal sync connector (obsidian-sync, secondbrain-sync, etc.), pass connector="<connectorName>" and sourceType="sync" to auto-scope to connectors/<connector>.',
       schema: z.object({
         content:    z.string().describe('The memory to store in plain language'),
         locus:      z.string().default('personal/general').describe('Namespace e.g. people/alice, project/locigram'),
         entities:   z.array(z.string()).default([]).describe('Named entities mentioned'),
-        sourceType: z.enum(['manual','llm-session','email','sms','chat','webhook','system']).default('llm-session'),
+        sourceType: z.enum(['manual','llm-session','email','sms','chat','webhook','system','sync']).default('llm-session'),
         service:    z.enum(['claude', 'chatgpt', 'gemini', 'perplexity', 'copilot', 'grok', 'mistral', 'llama', 'other']).optional().describe('The LLM service this memory originates from. When provided with sourceType=llm-session, auto-scopes locus to sessions/<service> unless locus is explicitly set by caller.'),
+        connector:  z.string().optional().describe('Internal sync connector name (e.g. obsidian-sync, secondbrain-sync). When provided with sourceType=sync, auto-scopes locus to connectors/<connector> unless locus is explicitly set by caller.'),
+        source_ref: z.string().optional().describe('Unique source reference for upsert deduplication (e.g. obsidian:Infrastructure/MCP-Servers.md, surudb:client:7).'),
       }),
-      handler: async ({ content, locus, entities: ents, sourceType, service: modelService }: any) => {
+      handler: async ({ content, locus, entities: ents, sourceType, service: modelService, connector: connectorName, source_ref: sourceRef }: any) => {
         // oauthService (from verified auth) takes precedence over model-provided service
         const service = oauthService ?? modelService ?? null
 
-        const resolvedLocus = (
-          service &&
-          sourceType === 'llm-session' &&
-          locus === 'personal/general'
-        )
-          ? `sessions/${service}`
-          : locus
+        // Resolve locus: service-scoped for LLM sessions, connector-scoped for sync jobs
+        let resolvedLocus = locus
+        if (service && sourceType === 'llm-session' && locus === 'personal/general') {
+          resolvedLocus = `sessions/${service}`
+        } else if (connectorName && sourceType === 'sync' && locus === 'personal/general') {
+          resolvedLocus = `connectors/${connectorName}`
+        }
+
+        // Upsert by source_ref if provided (update existing rather than insert duplicate)
+        if (sourceRef) {
+          const [existing] = await db.select().from(locigrams)
+            .where(and(eq(locigrams.palaceId, palaceId), eq(locigrams.sourceRef, sourceRef)))
+            .limit(1)
+
+          if (existing) {
+            const [updated] = await db.update(locigrams)
+              .set({ content, locus: resolvedLocus, entities: ents, sourceType, metadata: { service: service ?? null, connector: connectorName ?? null } })
+              .where(eq(locigrams.id, existing.id))
+              .returning()
+
+            const vec = await vector.embed(content)
+            await vector.upsert(collection, updated.id, vec, {
+              palace_id: palaceId,
+              locus: resolvedLocus,
+              source_type: sourceType,
+              service: service ?? null,
+              connector: connectorName ?? 'mcp',
+              entities: ents,
+              confidence: 1.0,
+              created_at: updated.createdAt.toISOString(),
+            })
+            return { id: updated.id, status: 'updated' }
+          }
+        }
 
         const [loc] = await db.insert(locigrams).values({
-          content, locus: resolvedLocus, entities: ents, sourceType, confidence: 1.0, metadata: { service: service ?? null }, palaceId,
+          content, locus: resolvedLocus, entities: ents, sourceType, confidence: 1.0,
+          metadata: { service: service ?? null, connector: connectorName ?? null },
+          ...(sourceRef ? { sourceRef } : {}),
+          palaceId,
         }).returning()
 
         const vec = await vector.embed(content)
@@ -79,7 +111,7 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           locus: resolvedLocus,
           source_type: sourceType,
           service: service ?? null,
-          connector: 'mcp',
+          connector: connectorName ?? 'mcp',
           entities: ents,
           confidence: 1.0,
           created_at: loc.createdAt.toISOString(),

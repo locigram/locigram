@@ -39,17 +39,16 @@ async function ensureInitialized(): Promise<void> {
 
 export async function upsertMemory(
   content: string,
-  locus: string,
   sourceRef: string,
 ): Promise<void> {
   const params = {
     name: 'memory_remember',
     arguments: {
       content,
-      locus,
       sourceType: 'sync',
       connector: 'obsidian-sync',
       source_ref: sourceRef,
+      // locus omitted — server auto-scopes to connectors/obsidian-sync
     },
   }
 
