@@ -75,6 +75,19 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           .set({ embeddingId: loc.id, tier: 'hot' })
           .where(eq(locigrams.id, loc.id))
 
+        // Fire-and-forget graph write
+        const { writeMemoryToGraph, parseAgentFromLocus } = await import('../graph/graph-write')
+        void writeMemoryToGraph({
+          id: loc.id,
+          palaceId,
+          locus,
+          sourceType,
+          agentName: parseAgentFromLocus(locus),
+          importance: 'normal',
+          occurredAt: loc.createdAt,
+          connector: 'mcp',
+        }).catch(e => console.warn('[graph] memory_remember write failed:', e))
+
         return { id: loc.id, status: 'stored' }
       },
     },
