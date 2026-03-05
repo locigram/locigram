@@ -334,6 +334,11 @@ curl -X POST http://localhost:3000/api/webhook/ingest \
 |----------|---------|-------------|
 | `MEMGRAPH_URL` | _(blank — graph disabled)_ | Bolt connection string e.g. `bolt://memgraph:7687`. When set, the graph-worker starts automatically and all writes are mirrored to Memgraph. When blank, graph features are silently skipped — Postgres + Qdrant continue working normally. |
 
+### NER Pre-Extraction (optional — enables GLiNER)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GLINER_URL` | _(blank — GLiNER disabled)_ | HTTP base URL of the GLiNER NER server e.g. `http://gliner-server.ai-gateway.svc.cluster.local:8080`. When set, the pipeline calls GLiNER before each LLM extraction to pre-detect entities (person, org, location, product, software, ip_address, date, event, topic). Results are injected into the LLM prompt as hints. Pipeline fails open — if GLiNER times out (5s) or errors, extraction continues LLM-only. When blank, GLiNER is skipped entirely. |
+
 ### LLM — Embedding
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -657,14 +662,16 @@ Legacy flat loci (`agent/{name}`) are automatically mapped to `agent/{name}/cont
 │                            Locigram                              │
 │                                                                  │
 │  REST API + MCP  ←→  Pipeline  ←→  Qdrant (vector search)       │
-│        ↕                 ↕                ↕                      │
-│     Postgres       LLM (embed/extract)  Memgraph (graph layer)  │
-│        ↑                                    ↑                    │
+│        ↕              ↑    ↕                ↕                    │
+│     Postgres    GLiNER │  LLM (embed/extract) Memgraph (graph)  │
+│        ↑        NER    │                    ↑                    │
 │   Connectors (M365, HaloPSA, Gmail, ...)    │                   │
 │                          Background Workers ┘                    │
 │          embed-worker · graph-worker · truth-engine              │
 └──────────────────────────────────────────────────────────────────┘
 ```
+
+**GLiNER NER Server** (`ghcr.io/locigram/gliner-server:latest`) — optional pre-extraction service. Runs before each LLM call to detect entities (person, org, location, software, etc.) at ~1s on CPU. Injects results into the LLM prompt as hints. Pipeline fails open — continues LLM-only if GLiNER is unavailable. Set `GLINER_URL` to activate.
 
 - **Postgres** — source of truth: structured storage (locigrams, truths, entities, sources, retrieval_events). Only layer that needs to be backed up — everything else is derived and rebuildable.
 - **Qdrant** — vector search for semantic recall (hot + warm tier only; cold = Postgres-only). Populated by background embed-worker every 30s.
@@ -965,7 +972,7 @@ Truth engine (every 6h, knowledge only)
 | `@locigram/core` | Shared types + Zod schemas |
 | `@locigram/db` | Drizzle schema + raw SQL migrations (`migrate.ts` is the ground truth — runs as a K8s initContainer on every deploy) |
 | `@locigram/server` | Hono REST API + MCP server. Includes background workers: embed-worker, graph-worker, truth-engine. Graph layer lives in `src/graph/` — `graph-client.ts` (Bolt driver), `graph-write.ts` (MERGE nodes + edges), `graph-worker.ts` (poll-based durable sync), `migrate-to-graph.ts` (one-shot backfill). |
-| `@locigram/pipeline` | Ingestion, LLM extraction, dedup, entity resolution |
+| `@locigram/pipeline` | Ingestion, LLM extraction, dedup, entity resolution. Source files: `ingest.ts`, `extract.ts` (LLM call with GLiNER pre-extraction), `gliner.ts` (GLiNER HTTP client — optional, fail-open), `resolve.ts`, `dedup.ts`, `normalize.ts` |
 | `@locigram/truth` | Truth engine — promotion, decay, confidence scoring |
 | `@locigram/vector` | Qdrant wrapper — embed, upsert, search |
 | `@locigram/registry` | Connector plugin registry |
@@ -976,6 +983,19 @@ Truth engine (every 6h, knowledge only)
 
 See [`deploy/k8s/`](deploy/k8s/) for Kubernetes manifests.  
 Each palace gets its own namespace, Longhorn PVCs, and NodePort services.
+
+**GLiNER NER Server** (`deploy/k8s/gliner.yaml`) is an optional sidecar deployment in the `ai-gateway` namespace. Deploy it independently of the palace manifest — it is shared across all palaces.
+
+```bash
+# Deploy GLiNER (optional — pipeline works without it)
+kubectl apply -f deploy/k8s/gliner.yaml
+
+# Verify
+kubectl get pods -n ai-gateway
+curl http://10.10.100.80:30901/health
+```
+
+Once running, set `GLINER_URL=http://gliner-server.ai-gateway.svc.cluster.local:8080` in the locigram-server deployment env vars to activate pre-extraction.
 
 ## Graph Layer (Memgraph)
 
