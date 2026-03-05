@@ -10,6 +10,7 @@ async function rpc(method: string, params: Record<string, unknown>): Promise<unk
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
       ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
     },
     body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
