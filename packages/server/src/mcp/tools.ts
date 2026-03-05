@@ -49,23 +49,36 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
     },
 
     memory_remember: {
-      description: 'Store a new memory in the palace.',
+      description: 'Store a new memory in the palace. When called from an external LLM service (Claude.ai, ChatGPT, Gemini, etc.), pass sourceType="llm-session" and service="<serviceName>" to automatically scope to the correct sessions/<service> locus.',
       schema: z.object({
         content:    z.string().describe('The memory to store in plain language'),
         locus:      z.string().default('personal/general').describe('Namespace e.g. people/alice, project/locigram'),
         entities:   z.array(z.string()).default([]).describe('Named entities mentioned'),
         sourceType: z.enum(['manual','llm-session','email','sms','chat','webhook','system']).default('llm-session'),
+        service:    z.enum(['claude', 'chatgpt', 'gemini', 'perplexity', 'copilot', 'grok', 'mistral', 'llama', 'other']).optional().describe('The LLM service this memory originates from. When provided with sourceType=llm-session, auto-scopes locus to sessions/<service> unless locus is explicitly set by caller.'),
       }),
-      handler: async ({ content, locus, entities: ents, sourceType }: any) => {
+      handler: async ({ content, locus, entities: ents, sourceType, service }: any) => {
+        // Auto-scope locus to sessions/<service> for llm-session sourceType
+        // Only apply if service is provided, sourceType is llm-session,
+        // and caller did NOT explicitly provide a non-default locus
+        const resolvedLocus = (
+          service &&
+          sourceType === 'llm-session' &&
+          locus === 'personal/general'
+        )
+          ? `sessions/${service}`
+          : locus
+
         const [loc] = await db.insert(locigrams).values({
-          content, locus, entities: ents, sourceType, confidence: 1.0, metadata: {}, palaceId,
+          content, locus: resolvedLocus, entities: ents, sourceType, confidence: 1.0, metadata: { service: service ?? null }, palaceId,
         }).returning()
 
         const vec = await vector.embed(content)
         await vector.upsert(collection, loc.id, vec, {
           palace_id: palaceId,
-          locus,
+          locus: resolvedLocus,
           source_type: sourceType,
+          service: service ?? null,
           connector: 'mcp',
           entities: ents,
           confidence: 1.0,
@@ -270,12 +283,13 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
     },
 
     memory_session_start: {
-      description: 'Called at session start or after compaction. Returns recent decisions, active context, and high-importance items for the given agent locus. Use this to recover context after a compaction event.',
+      description: 'Called at session start or after compaction. Returns recent decisions, active context, and high-importance items. Pass locus for agent context (e.g. agent/main). Pass service to also include memories from sessions/<service> (for external LLM sessions like ChatGPT, Gemini, etc.).',
       schema: z.object({
         locus:        z.string().optional().describe('Agent locus filter e.g. agent/main, agent/watcher, agent/msp'),
         lookbackDays: z.number().int().default(7),
+        service:      z.enum(['claude', 'chatgpt', 'gemini', 'perplexity', 'copilot', 'grok', 'mistral', 'llama', 'other']).optional().describe('When provided, also includes memories from sessions/<service> locus in the context window.'),
       }),
-      handler: async ({ locus, lookbackDays }: { locus?: string; lookbackDays: number }) => {
+      handler: async ({ locus, lookbackDays, service }: { locus?: string; lookbackDays: number; service?: string }) => {
         const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000)
 
         const memConditions = [
@@ -331,13 +345,34 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           console.warn('[graph] memory_session_start traversal failed:', e)
         }
 
-        const allMemories = [...recentMemories, ...graphMemories]
+        // If service provided, also pull recent memories from sessions/<service>
+        let serviceMemories: typeof recentMemories = []
+        if (service) {
+          const serviceConditions = [
+            eq(locigrams.palaceId, palaceId),
+            gte(locigrams.createdAt, since),
+            isNull(locigrams.expiresAt),
+            like(locigrams.locus, `sessions/${service}%`),
+          ]
+          serviceMemories = await db.select().from(locigrams)
+            .where(and(...serviceConditions))
+            .orderBy(desc(locigrams.createdAt))
+            .limit(10)
+        }
+
+        // Deduplicate by id before returning
+        const seen = new Set<string>()
+        const allMemories = [...recentMemories, ...graphMemories, ...serviceMemories].filter(m => {
+          if (seen.has(m.id)) return false
+          seen.add(m.id)
+          return true
+        })
 
         return {
           recentMemories: allMemories,
           truths: recentTruths,
           graphEnriched: graphMemories.length > 0,
-          summary: `Found ${recentMemories.length} recent memories${graphMemories.length > 0 ? ` + ${graphMemories.length} graph-connected` : ''} and ${recentTruths.length} truths from the last ${lookbackDays} days.`,
+          summary: `Found ${recentMemories.length} recent memories${graphMemories.length > 0 ? ` + ${graphMemories.length} graph-connected` : ''}${serviceMemories.length > 0 ? ` + ${serviceMemories.length} from sessions/${service}` : ''} and ${recentTruths.length} truths from the last ${lookbackDays} days.`,
         }
       },
     },
