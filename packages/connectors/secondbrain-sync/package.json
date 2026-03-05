@@ -1,0 +1,13 @@
+{
+  "name": "@locigram/connector-secondbrain-sync",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun run --watch src/index.ts"
+  },
+  "dependencies": {
+    "postgres": "latest"
+  }
+}

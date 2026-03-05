@@ -1,0 +1,17 @@
+FROM oven/bun:1-alpine
+WORKDIR /app
+
+# Copy root workspace manifest
+COPY package.json ./
+
+# Copy connector package manifest
+COPY packages/connectors/secondbrain-sync/package.json ./packages/connectors/secondbrain-sync/
+
+# Install deps (workspace-aware)
+RUN bun install
+
+# Copy connector source
+COPY packages/connectors/secondbrain-sync/ ./packages/connectors/secondbrain-sync/
+COPY tsconfig.json ./
+
+ENTRYPOINT ["bun", "run", "packages/connectors/secondbrain-sync/src/index.ts"]
