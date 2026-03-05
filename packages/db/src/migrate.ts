@@ -232,6 +232,27 @@ await sql`
   ON CONFLICT (id) DO UPDATE SET api_token = EXCLUDED.api_token
 `
 
+// ── Additive migrations (safe to re-run) ─────────────────────────────────────
+
+// Add service column to oauth_clients
+await sql`ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS service text`
+
+// Create oauth_access_tokens table
+await sql`
+  CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+    id           text PRIMARY KEY,
+    token_hash   text NOT NULL UNIQUE,
+    client_id    text NOT NULL REFERENCES oauth_clients(id),
+    palace_id    text NOT NULL,
+    created_at   timestamptz DEFAULT now(),
+    expires_at   timestamptz NOT NULL,
+    revoked_at   timestamptz,
+    last_used_at timestamptz
+  )
+`
+await sql`CREATE INDEX IF NOT EXISTS oauth_access_tokens_client_idx ON oauth_access_tokens(client_id)`
+await sql`CREATE INDEX IF NOT EXISTS oauth_access_tokens_palace_idx ON oauth_access_tokens(palace_id)`
+
 await sql.end()
 console.log('[migrate] done')
 process.exit(0)

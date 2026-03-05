@@ -255,21 +255,30 @@ export function createApp(config: AppConfig) {
     return c.json(result)
   })
 
-  // ── MCP endpoint (exempt from auth middleware — bearer check inline) ──────
-  let mcpHandler: ((req: Request) => Promise<Response>) | null = null
+  // ── MCP endpoint (auth middleware resolves token → oauthService) ──────────
+  const mcpHandlers = new Map<string, (req: Request) => Promise<Response>>()
 
-  // MCP handler mounted at both /mcp/* (explicit) and /* (root — for clients that use base URL directly)
-  const handleMcp = async (c: any) => {
-    if (!mcpHandler) {
-      const palace = c.get('palace') as import('@locigram/db').Palace
-      mcpHandler = createMcpHandler(db, palace, vectorClient, collectionName, config.apiToken)
+  function getMcpHandler(palace: import('@locigram/db').Palace, oauthService: string | null) {
+    const key = oauthService ?? '__master__'
+    let handler = mcpHandlers.get(key)
+    if (!handler) {
+      handler = createMcpHandler(db, palace, vectorClient, collectionName, oauthService)
+      mcpHandlers.set(key, handler)
     }
-    return mcpHandler(c.req.raw)
+    return handler
   }
-  app.all('/mcp/*', handleMcp)
-  app.all('/mcp', handleMcp)
+
+  const handleMcp = async (c: any) => {
+    const palace = c.get('palace') as import('@locigram/db').Palace
+    const oauthService = c.get('oauthService') as string | null ?? null
+    const handler = getMcpHandler(palace, oauthService)
+    return handler(c.req.raw)
+  }
+
+  app.all('/mcp/*', authMiddleware, handleMcp)
+  app.all('/mcp', authMiddleware, handleMcp)
   // Root path — Claude.ai uses the base URL directly as the MCP endpoint
-  app.all('/', handleMcp)
+  app.all('/', authMiddleware, handleMcp)
 
   // Cleanup on shutdown
   const originalFetch = app.fetch.bind(app)

@@ -3,7 +3,7 @@ import { HTTPException } from 'hono/http-exception'
 import crypto from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import { eq, and, isNull } from 'drizzle-orm'
-import { oauthClients, oauthCodes, palaces } from '@locigram/db'
+import { oauthClients, oauthCodes, oauthAccessTokens, palaces } from '@locigram/db'
 import type { DB } from '@locigram/db'
 
 export const tokenRoute = new Hono()
@@ -103,23 +103,24 @@ tokenRoute.post('/', async (c) => {
     .set({ usedAt: new Date() })
     .where(eq(oauthCodes.code, code))
 
-  // Fetch palace api_token
-  const [palace] = await db
-    .select({ apiToken: palaces.apiToken })
-    .from(palaces)
-    .where(eq(palaces.id, authCode.palaceId))
-    .limit(1)
+  // Issue a unique per-client access token
+  const rawToken = crypto.randomBytes(32).toString('hex')
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex')
+  const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) // 1 year
 
-  if (!palace || !palace.apiToken) {
-    throw new HTTPException(500, { message: 'Palace has no API token configured' })
-  }
+  await db.insert(oauthAccessTokens).values({
+    id: crypto.randomUUID(),
+    tokenHash,
+    clientId: resolvedClientId,
+    palaceId: authCode.palaceId,
+    expiresAt,
+  })
 
-  // Set a session cookie so clients that don't send Authorization header
-  // (e.g. Claude.ai) can still authenticate via cookie on subsequent requests
-  c.header('Set-Cookie', `locigram_token=${palace.apiToken}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=3600`)
+  // Session cookie for clients that don't send Authorization header (e.g. Claude.ai)
+  c.header('Set-Cookie', `locigram_token=${rawToken}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=${365 * 24 * 60 * 60}`)
 
   return c.json({
-    access_token: palace.apiToken,
+    access_token: rawToken,
     token_type: 'bearer',
     scope: 'mcp',
   })

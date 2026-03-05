@@ -212,6 +212,7 @@ export const oauthClients = pgTable(
     secretHash:   text('secret_hash').notNull(),
     redirectUris: text('redirect_uris').array().notNull().default(sql`'{}'`),
     palaceId:     palaceId(),
+    service:      text('service'),   // 'claude'|'chatgpt'|'gemini'|'perplexity'|'copilot'|'grok'|'mistral'|'llama'|'other' — null for non-LLM clients
     createdAt:    tstz('created_at').defaultNow(),
     revokedAt:    tstz('revoked_at'),
   },
@@ -239,6 +240,27 @@ export const oauthCodes = pgTable(
   ],
 )
 
+// ── oauth_access_tokens ──────────────────────────────────────────────────────
+
+export const oauthAccessTokens = pgTable(
+  'oauth_access_tokens',
+  {
+    id:          text('id').primaryKey(),          // random UUID
+    tokenHash:   text('token_hash').notNull(),     // sha256 hex of the raw token
+    clientId:    text('client_id').notNull().references(() => oauthClients.id),
+    palaceId:    text('palace_id').notNull(),
+    createdAt:   tstz('created_at').defaultNow(),
+    expiresAt:   tstz('expires_at').notNull(),     // 1 year from issue
+    revokedAt:   tstz('revoked_at'),
+    lastUsedAt:  tstz('last_used_at'),
+  },
+  (t) => [
+    uniqueIndex('oauth_access_tokens_hash_idx').on(t.tokenHash),
+    index('oauth_access_tokens_client_idx').on(t.clientId),
+    index('oauth_access_tokens_palace_idx').on(t.palaceId),
+  ],
+)
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type Palace    = typeof palaces.$inferSelect
@@ -260,6 +282,8 @@ export type NewRetrievalEvent  = typeof retrievalEvents.$inferInsert
 export type NewSyncCursor      = typeof syncCursors.$inferInsert
 export type NewOAuthClient     = typeof oauthClients.$inferInsert
 export type NewOAuthCode       = typeof oauthCodes.$inferInsert
+export type OAuthAccessToken   = typeof oauthAccessTokens.$inferSelect
+export type NewOAuthAccessToken = typeof oauthAccessTokens.$inferInsert
 
 // ── Reference type constants ──────────────────────────────────────────────────
 

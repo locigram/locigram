@@ -17,7 +17,7 @@ export interface VectorOps {
 
 // ── Tool builder ─────────────────────────────────────────────────────────────
 
-export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection: string) {
+export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection: string, oauthService?: string | null) {
   const palaceId = palace.id
 
   return {
@@ -57,10 +57,10 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
         sourceType: z.enum(['manual','llm-session','email','sms','chat','webhook','system']).default('llm-session'),
         service:    z.enum(['claude', 'chatgpt', 'gemini', 'perplexity', 'copilot', 'grok', 'mistral', 'llama', 'other']).optional().describe('The LLM service this memory originates from. When provided with sourceType=llm-session, auto-scopes locus to sessions/<service> unless locus is explicitly set by caller.'),
       }),
-      handler: async ({ content, locus, entities: ents, sourceType, service }: any) => {
-        // Auto-scope locus to sessions/<service> for llm-session sourceType
-        // Only apply if service is provided, sourceType is llm-session,
-        // and caller did NOT explicitly provide a non-default locus
+      handler: async ({ content, locus, entities: ents, sourceType, service: modelService }: any) => {
+        // oauthService (from verified auth) takes precedence over model-provided service
+        const service = oauthService ?? modelService ?? null
+
         const resolvedLocus = (
           service &&
           sourceType === 'llm-session' &&

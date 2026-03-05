@@ -45,9 +45,9 @@ export function createMcpHandler(
   palace: Palace,
   vectorClient: VectorOps,
   collection: string,
-  apiToken?: string,
+  oauthService?: string | null,
 ): (req: Request) => Promise<Response> {
-  const tools = buildTools(db, palace, vectorClient, collection)
+  const tools = buildTools(db, palace, vectorClient, collection, oauthService)
   const sessions = new Map<string, Session>()
 
   function cleanupSession(sessionId: string) {
@@ -60,26 +60,6 @@ export function createMcpHandler(
   }
 
   return async (req: Request): Promise<Response> => {
-    // Bearer auth (only if apiToken configured)
-    if (apiToken) {
-      const authHeader = req.headers.get('Authorization') ?? req.headers.get('authorization') ?? ''
-      const bearerToken = authHeader.replace(/^[Bb]earer\s+/, '')
-      // Fallback: check session cookie (for clients like Claude.ai that don't send Authorization header post-OAuth)
-      const cookieHeader = req.headers.get('Cookie') ?? ''
-      const cookieToken = cookieHeader.match(/locigram_token=([^;]+)/)?.[1] ?? ''
-      const token = bearerToken || cookieToken
-      if (token !== apiToken) {
-        const publicUrl = process.env.LOCIGRAM_PUBLIC_URL || 'http://localhost:3000'
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-          status: 401,
-          headers: {
-            'Content-Type': 'application/json',
-            'WWW-Authenticate': `Bearer realm="locigram", resource_metadata="${publicUrl}/.well-known/oauth-protected-resource"`,
-          },
-        })
-      }
-    }
-
     const sessionId = req.headers.get('mcp-session-id')
 
     // Route to existing session
