@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { RawMemory } from '@locigram/core'
 import type { PipelineConfig, LLMRole } from './config'
 import { REFERENCE_TYPES } from '@locigram/db'
+import { extractEntitiesWithGLiNER } from './gliner'
 
 // ── Regex patterns for reference data detection ───────────────────────────────
 
@@ -69,7 +70,20 @@ Rules:
     configuration = settings, policies, thresholds, baselines
     service_account = usernames, roles, permissions (NOT passwords or secrets)
     contract = SLA terms, renewal dates, pricing, agreement terms
-    contact = person phone/email/role/org details`
+    contact = person phone/email/role/org details
+- If pre-extracted entities are provided below, use them as your starting point. Add aliases or additional entities you find, but do NOT remove or rename provided entities.`
+
+function buildUserMessage(content: string, preEntities: Array<{name: string; type: string}> | null, noThink: boolean): string {
+  const parts: string[] = []
+
+  if (preEntities && preEntities.length > 0) {
+    const entityList = preEntities.map(e => `  - ${e.name} (${e.type})`).join('\n')
+    parts.push(`Pre-extracted entities (from GLiNER — use these, add aliases if needed):\n${entityList}\n`)
+  }
+
+  parts.push(noThink ? `${content}\n/no_think` : content)
+  return parts.join('\n')
+}
 
 function fallback(raw: RawMemory, isReference = false): ExtractionResult {
   return {
@@ -102,6 +116,12 @@ export async function extractFromRaw(
   const regexIsReference = detectReferenceByRegex(raw.content)
 
   try {
+    // GLiNER pre-extraction (fast, optional — falls back gracefully if unavailable)
+    const glinerResult = await extractEntitiesWithGLiNER(raw.content)
+    if (glinerResult) {
+      console.log(`[pipeline] GLiNER found ${glinerResult.entities.length} entities in ${glinerResult.durationMs}ms`)
+    }
+
     const res = await fetch(`${role.url}/chat/completions`, {
       method:  'POST',
       headers: authHeaders(role),
@@ -109,7 +129,7 @@ export async function extractFromRaw(
         model: role.model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: role.noThink ? `${raw.content}\n/no_think` : raw.content },
+          { role: 'user', content: buildUserMessage(raw.content, glinerResult?.entities ?? null, role.noThink ?? false) },
         ],
         temperature: 0.1,
       }),
