@@ -11,7 +11,7 @@ const schema = z.object({
   locus:      z.string().default('personal/general'),
   entities:   z.array(z.string()).default([]),
   confidence: z.number().min(0).max(1).default(1.0),
-  metadata:   z.record(z.unknown()).default({}),
+  metadata:   z.record(z.string(), z.unknown()).default({}),
   connector:  z.string().optional(),
   rawUrl:     z.string().optional(),
 })
