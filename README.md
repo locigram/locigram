@@ -430,6 +430,77 @@ Locigram exposes an **MCP (Model Context Protocol) server** at `/mcp`. This is t
 
 ---
 
+### External LLM Clients — Claude.ai, ChatGPT, Gemini (OAuth 2.0 + PKCE)
+
+Locigram implements a full **OAuth 2.0 Authorization Server** so external AI services can connect as MCP clients and store memories that are automatically service-tagged and routed to the correct locus.
+
+**How service tagging works:**
+1. Each OAuth client registered in `oauth_clients` has a `service` field (`claude`, `chatgpt`, `gemini`, etc.)
+2. On every MCP request, the auth middleware resolves the Bearer token → SHA256 hash → `oauth_access_tokens` → `oauth_clients.service`
+3. `memory_remember` auto-routes to `sessions/<service>` locus when `sourceType=llm-session`
+
+Result: Claude.ai memories land in `sessions/claude`, ChatGPT in `sessions/chatgpt` — fully separated, no model configuration needed.
+
+**OAuth endpoints:**
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/.well-known/oauth-protected-resource` | GET | Resource metadata (discovery) |
+| `/.well-known/oauth-authorization-server` | GET | Auth server metadata (discovery) |
+| `/oauth/register` | POST | Dynamic client registration (Claude.ai uses this) |
+| `/oauth/authorize` | GET | Start OAuth flow → auth code |
+| `/oauth/token` | POST | Exchange auth code for access token |
+| `/oauth/clients` | GET/POST | List or create clients (admin — requires palace token) |
+| `/oauth/clients/:id` | PATCH/DELETE | Update service tag or revoke a client |
+| `/oauth/clients/tokens` | GET | List active tokens (admin) |
+
+**Per-client token model:** Each OAuth flow issues a unique random 64-char hex token. Only its SHA256 hash is stored — the raw token is returned once and never retrievable again. Tokens expire after 1 year.
+
+**Setting up Claude.ai:**
+
+Claude.ai uses dynamic client registration — it auto-registers itself on first connect. After it connects, manually set the `service` tag:
+
+```sql
+UPDATE oauth_clients SET service = 'claude'
+WHERE name = 'Claude' AND revoked_at IS NULL;
+```
+
+In Claude.ai: **Settings → Feature Preview → Model Context Protocol → Add server** → URL: `https://<your-locigram-host>/mcp`
+
+**Known issue — Accept header:** Claude.ai only sends `Accept: application/json`. The MCP SDK requires `text/event-stream` as well. Locigram patches this automatically in the MCP handler — no client configuration needed.
+
+**Setting up ChatGPT:**
+
+ChatGPT requires you to pre-create a client with a known `client_id` and `client_secret`:
+
+```bash
+curl -X POST https://<your-locigram-host>/oauth/clients \
+  -H "Authorization: Bearer <palace_api_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ChatGPT",
+    "redirect_uris": ["https://chatgpt.com/connector/oauth/<connector-id>"],
+    "service": "chatgpt"
+  }'
+```
+
+**ChatGPT connector redirect URIs change every time a new connector is created.** When ChatGPT gives you a new redirect URI, update it:
+
+```sql
+UPDATE oauth_clients
+  SET redirect_uris = '{"https://chatgpt.com/connector/oauth/<new-id>"}'
+  WHERE id = '<client_id>' AND revoked_at IS NULL;
+```
+
+**Supported service values:** `claude` · `chatgpt` · `gemini` · `perplexity` · `copilot` · `grok` · `mistral` · `llama` · `other`
+
+**Revoking all clients (forces re-auth):**
+```sql
+UPDATE oauth_clients SET revoked_at = NOW() WHERE revoked_at IS NULL;
+```
+
+---
+
 ### Wiring to OpenClaw via mcporter
 
 OpenClaw uses [mcporter](https://mcporter.dev) as its MCP client runtime. Follow these steps to connect Locigram to any OpenClaw agent.
