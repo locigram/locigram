@@ -280,8 +280,10 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           gte(locigrams.createdAt, since),
           isNull(locigrams.expiresAt),
           or(like(locigrams.locus, 'agent/%'), eq(locigrams.importance, 'high')),
+          // exclude heartbeats — just alive pings, not useful for context recovery
+          sql`${locigrams.locus} NOT LIKE '%/heartbeat'`,
         ]
-        if (locus) memConditions.push(eq(locigrams.locus, locus))
+        if (locus) memConditions.push(like(locigrams.locus, `${locus}/%`))
 
         const recentMemories = await db.select().from(locigrams)
           .where(and(...memConditions))
