@@ -1,4 +1,4 @@
-import type { Client, Contact, Device, Ticket, InvoiceFact, Person } from './db'
+import type { Client, Device, Ticket, InvoiceFact, Person } from './db'
 import { synthesizeWithLLM } from './llm'
 
 const SYSTEM_PROMPT = `You are a business intelligence summarizer for Suru Solutions, a managed IT services company.
@@ -18,24 +18,22 @@ export interface MemoryEntry {
 
 export async function synthesizeClientProfiles(
   clients: Client[],
-  contacts: Contact[],
   devices: Device[],
   tickets: Ticket[],
 ): Promise<MemoryEntry[]> {
   const entries: MemoryEntry[] = []
 
   for (const client of clients) {
-    const clientContacts = contacts.filter((c) => c.client_id === client.id)
-    const clientDevices = devices.filter((d) => d.client_id === client.id)
+    const clientDevices = devices.filter((d) => d.org_id === client.id)
     const clientTickets = tickets.filter((t) => t.client_id === client.id)
-    const openTickets = clientTickets.filter((t) => t.status !== 'closed' && t.status !== 'resolved')
-    const primaryContact = clientContacts[0]
+    const openTickets = clientTickets.filter((t) =>
+      t.status_name && !['closed', 'resolved', 'completed'].includes(t.status_name.toLowerCase())
+    )
 
     const fallback = [
       `${client.name} is a Suru Solutions client`,
       client.industry ? ` in the ${client.industry} industry` : '',
       `. ${clientDevices.length} devices managed.`,
-      primaryContact ? ` Primary contact: ${primaryContact.name}.` : '',
       ` ${openTickets.length} open ticket(s) as of ${monthYear()}.`,
     ].join('')
 
@@ -43,9 +41,8 @@ export async function synthesizeClientProfiles(
       `Client: ${client.name}`,
       `Industry: ${client.industry ?? 'unknown'}`,
       `Devices: ${clientDevices.length}`,
-      `Primary contact: ${primaryContact ? `${primaryContact.name} (${primaryContact.role ?? 'unknown role'})` : 'none'}`,
       `Open tickets: ${openTickets.length}`,
-      `Recent ticket subjects: ${clientTickets.slice(0, 5).map((t) => t.subject).join('; ') || 'none'}`,
+      `Recent ticket subjects: ${clientTickets.slice(0, 5).map((t) => t.summary).join('; ') || 'none'}`,
     ].join('\n')
 
     const content = await synthesizeWithLLM(
@@ -69,13 +66,13 @@ export async function synthesizeDeviceSummaries(
   const sevenDays = 7 * 24 * 60 * 60 * 1000
 
   for (const client of clients) {
-    const clientDevices = devices.filter((d) => d.client_id === client.id)
+    const clientDevices = devices.filter((d) => d.org_id === client.id)
     if (clientDevices.length === 0) continue
 
     const offline7d = clientDevices.filter(
-      (d) => d.last_seen && now - new Date(d.last_seen).getTime() > sevenDays,
+      (d) => d.last_contact && now - new Date(d.last_contact).getTime() > sevenDays,
     )
-    const win10 = clientDevices.filter((d) => d.os?.toLowerCase().includes('windows 10'))
+    const win10 = clientDevices.filter((d) => d.os_name?.toLowerCase().includes('windows 10'))
 
     const fallback = [
       `${client.name} has ${clientDevices.length} device(s).`,
@@ -87,9 +84,9 @@ export async function synthesizeDeviceSummaries(
     const userPrompt = [
       `Client: ${client.name}`,
       `Total devices: ${clientDevices.length}`,
-      `Offline >7 days: ${offline7d.length} (${offline7d.map((d) => d.hostname).join(', ') || 'none'})`,
+      `Offline >7 days: ${offline7d.length} (${offline7d.map((d) => d.system_name).join(', ') || 'none'})`,
       `Windows 10 devices: ${win10.length}`,
-      `OS breakdown: ${[...new Set(clientDevices.map((d) => d.os).filter(Boolean))].join(', ') || 'unknown'}`,
+      `OS breakdown: ${[...new Set(clientDevices.map((d) => d.os_name).filter(Boolean))].join(', ') || 'unknown'}`,
     ].join('\n')
 
     const content = await synthesizeWithLLM(
@@ -117,7 +114,7 @@ export async function synthesizeTicketPatterns(
     // Group by rough subject similarity (first 30 chars lowercase)
     const groups = new Map<string, Ticket[]>()
     for (const t of clientTickets) {
-      const key = t.subject.toLowerCase().slice(0, 30).trim()
+      const key = t.summary.toLowerCase().slice(0, 30).trim()
       const arr = groups.get(key) ?? []
       arr.push(t)
       groups.set(key, arr)
@@ -127,7 +124,10 @@ export async function synthesizeTicketPatterns(
     const patterns = [...groups.entries()].filter(
       ([, tix]) =>
         tix.length >= 3 ||
-        tix.some((t) => t.priority === 'high' && t.status !== 'closed' && t.status !== 'resolved'),
+        tix.some((t) =>
+          t.priority_name?.toLowerCase() === 'high' &&
+          !['closed', 'resolved', 'completed'].includes(t.status_name?.toLowerCase() ?? '')
+        ),
     )
 
     if (patterns.length === 0) continue
@@ -135,15 +135,17 @@ export async function synthesizeTicketPatterns(
     const fallback = patterns
       .map(([, tix]) => {
         const sample = tix[0]
-        return `Recurring issue at ${client.name}: "${sample.subject}" — ${tix.length} ticket(s) in last 30 days.`
+        return `Recurring issue at ${client.name}: "${sample.summary}" — ${tix.length} ticket(s) in last 30 days.`
       })
       .join(' ')
 
     const userPrompt = patterns
       .map(([, tix]) => {
         const sample = tix[0]
-        const unresolved = tix.filter((t) => t.status !== 'closed' && t.status !== 'resolved').length
-        return `- "${sample.subject}" x${tix.length}, ${unresolved} unresolved, priority: ${sample.priority ?? 'normal'}`
+        const unresolved = tix.filter((t) =>
+          !['closed', 'resolved', 'completed'].includes(t.status_name?.toLowerCase() ?? '')
+        ).length
+        return `- "${sample.summary}" x${tix.length}, ${unresolved} unresolved, priority: ${sample.priority_name ?? 'normal'}`
       })
       .join('\n')
 
@@ -162,7 +164,7 @@ export async function synthesizeTicketPatterns(
 export async function synthesizeKeyContacts(people: Person[]): Promise<MemoryEntry[]> {
   return people.map((p) => {
     const parts = [
-      `${p.full_name}`,
+      `${p.name}`,
       p.role ? ` is the ${p.role}` : '',
       p.client_id ? ` at client ${p.client_id}` : '',
       p.email ? ` (${p.email})` : '',
@@ -187,15 +189,14 @@ export async function synthesizeFinancialSnapshot(
   const mrr = Math.round(totalRevenue / 3)
 
   // Find late payers (paid after due date)
-  const latePayers = invoices
-    .filter((i) => i.paid_date && i.due_date && new Date(i.paid_date) > new Date(i.due_date))
-    .map((i) => i.customer_name)
-  const latePayerCounts = new Map<string, number>()
-  for (const name of latePayers) {
-    latePayerCounts.set(name, (latePayerCounts.get(name) ?? 0) + 1)
+  // Find clients with outstanding balances
+  const withBalance = invoices.filter((i) => i.balance && Number(i.balance) > 0)
+  const balanceByCustomer = new Map<string, number>()
+  for (const inv of withBalance) {
+    balanceByCustomer.set(inv.customer_name, (balanceByCustomer.get(inv.customer_name) ?? 0) + Number(inv.balance))
   }
-  const frequentLatePayers = [...latePayerCounts.entries()]
-    .filter(([, count]) => count >= 2)
+  const frequentLatePayers = [...balanceByCustomer.entries()]
+    .filter(([, bal]) => bal > 500)
     .map(([name]) => name)
 
   const fallback = [

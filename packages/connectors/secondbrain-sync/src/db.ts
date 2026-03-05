@@ -12,82 +12,85 @@ export interface Client {
   id: string
   name: string
   industry: string | null
-  is_active: boolean
-}
-
-export interface Contact {
-  client_id: string
-  name: string
-  email: string | null
-  phone: string | null
-  role: string | null
+  active: boolean
 }
 
 export interface Device {
-  client_id: string
-  hostname: string
-  os: string | null
-  role: string | null
-  status: string | null
-  last_seen: Date | null
+  id: string
+  org_id: string
+  system_name: string
+  dns_name: string | null
+  node_class: string | null
+  os_name: string | null
+  offline: boolean | null
+  last_contact: Date | null
+  last_logged_in_user: string | null
 }
 
 export interface Ticket {
   id: number
   client_id: string
-  subject: string
-  status: string
-  created_at: Date
-  resolved_at: Date | null
-  priority: string | null
+  client_name: string | null
+  summary: string
+  status_name: string | null
+  priority_name: string | null
+  date_occurred: Date | null
+  date_closed: Date | null
+  agent_name: string | null
 }
 
 export interface InvoiceFact {
   customer_name: string
   total_amt: number
   due_date: Date | null
-  paid_date: Date | null
-  status: string | null
+  balance: number | null
 }
 
 export interface Person {
   id: number
-  full_name: string
+  name: string
   client_id: string | null
   role: string | null
   email: string | null
   notes: string | null
-  last_seen: Date | null
+  last_interaction: Date | null
 }
 
 export async function getActiveClients(): Promise<Client[]> {
-  return sql<Client[]>`SELECT id, name, industry, is_active FROM sync.clients WHERE is_active = true`
-}
-
-export async function getContacts(): Promise<Contact[]> {
-  return sql<Contact[]>`SELECT client_id, name, email, phone, role FROM sync.contacts`
+  return sql<Client[]>`SELECT id, name, industry, active FROM sync.clients WHERE active = true`
 }
 
 export async function getDevices(): Promise<Device[]> {
-  return sql<Device[]>`SELECT client_id, hostname, os, role, status, last_seen FROM sync.devices`
+  return sql<Device[]>`
+    SELECT id, org_id, system_name, dns_name, node_class, os_name, offline, last_contact, last_logged_in_user
+    FROM sync.ninjaone_devices
+    ORDER BY system_name
+  `
 }
 
 export async function getRecentTickets(days: number = 30): Promise<Ticket[]> {
   return sql<Ticket[]>`
-    SELECT id, client_id, subject, status, created_at, resolved_at, priority
-    FROM sync.tickets
-    WHERE created_at >= NOW() - ${days + ' days'}::interval
+    SELECT id, client_id, client_name, summary, status_name, priority_name, date_occurred, date_closed, agent_name
+    FROM sync.halopsa_tickets
+    WHERE date_occurred >= NOW() - (${days} || ' days')::interval
+    ORDER BY date_occurred DESC
   `
 }
 
 export async function getRecentInvoices(days: number = 90): Promise<InvoiceFact[]> {
   return sql<InvoiceFact[]>`
-    SELECT customer_name, total_amt, due_date, paid_date, status
+    SELECT customer_name, total_amt, due_date, balance
     FROM sync.invoice_facts
-    WHERE due_date >= NOW() - ${days + ' days'}::interval
+    WHERE due_date >= NOW() - (${days} || ' days')::interval
+    ORDER BY due_date DESC
   `
 }
 
 export async function getPeople(): Promise<Person[]> {
-  return sql<Person[]>`SELECT id, full_name, client_id, role, email, notes, last_seen FROM intel.people`
+  return sql<Person[]>`
+    SELECT id, name, client_id, role, email, notes, last_interaction
+    FROM intel.people
+    ORDER BY last_interaction DESC NULLS LAST
+    LIMIT 200
+  `
 }

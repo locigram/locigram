@@ -1,4 +1,4 @@
-import { sql, getActiveClients, getContacts, getDevices, getRecentTickets, getRecentInvoices, getPeople } from './db'
+import { sql, getActiveClients, getDevices, getRecentTickets, getRecentInvoices, getPeople } from './db'
 import { ensureKvTable, readCursor, writeCursor } from './cursor'
 import { rememberMemory } from './locigram'
 import {
@@ -20,9 +20,8 @@ async function main() {
   }
 
   // Fetch all data in parallel
-  const [clients, contacts, devices, tickets, invoices, people] = await Promise.all([
+  const [clients, devices, tickets, invoices, people] = await Promise.all([
     getActiveClients(),
-    getContacts(),
     getDevices(),
     getRecentTickets(30),
     getRecentInvoices(90),
@@ -30,12 +29,12 @@ async function main() {
   ])
 
   console.log(
-    `[secondbrain-sync] Data loaded: ${clients.length} clients, ${contacts.length} contacts, ${devices.length} devices, ${tickets.length} tickets, ${invoices.length} invoices, ${people.length} people`,
+    `[secondbrain-sync] Data loaded: ${clients.length} clients, ${devices.length} devices, ${tickets.length} tickets, ${invoices.length} invoices, ${people.length} people`,
   )
 
   // Synthesize all categories
   const categories: Array<{ name: string; entries: Promise<MemoryEntry[]> }> = [
-    { name: 'Client Profiles', entries: synthesizeClientProfiles(clients, contacts, devices, tickets) },
+    { name: 'Client Profiles', entries: synthesizeClientProfiles(clients, devices, tickets) },
     { name: 'Device Summaries', entries: synthesizeDeviceSummaries(clients, devices) },
     { name: 'Ticket Patterns', entries: synthesizeTicketPatterns(clients, tickets) },
     { name: 'Key Contacts', entries: synthesizeKeyContacts(people) },
