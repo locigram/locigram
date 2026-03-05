@@ -171,7 +171,7 @@ export function createApp(config: AppConfig) {
         },
         body: JSON.stringify({
           model,
-          messages: [{ role: 'user', content: wrappedPrompt + ' /no_think' }],
+          messages: [{ role: 'user', content: noThink ? wrappedPrompt + ' /no_think' : wrappedPrompt }],
           max_tokens: maxTokens ?? 2000,
         }),
       })

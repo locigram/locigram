@@ -39,7 +39,7 @@ function role(
     url:      process.env[urlEnv]   ?? defaultUrl,
     model:    process.env[modelEnv] ?? defaultModel,
     apiKey:   process.env[keyEnv]   ?? undefined,
-    noThink:  process.env[noThinkEnv] === 'true',
+    noThink:  process.env[noThinkEnv] !== 'false',  // default ON — set to 'false' to disable
   }
 }
 
