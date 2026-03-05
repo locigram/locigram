@@ -34,7 +34,7 @@ async function main() {
     process.exit(0)
   }
 
-  const indexFile = JSON.parse(require('fs').readFileSync(INDEX_PATH, 'utf8')) as IndexFile
+  const indexFile = JSON.parse(await Bun.file(INDEX_PATH).text()) as IndexFile
   const approved = indexFile.entries.filter(e => e.verdict === 'index')
   console.log(`[obsidian-sync] Approved notes to sync: ${approved.length}`)
 
@@ -57,7 +57,7 @@ async function main() {
       // Summarize
       const summary = await summarizeNote(content, entry.path)
       const deepLink = buildDeepLink(entry.path)
-      const memoryContent = `${summary}\n\nFull details: ${deepLink}`
+      const memoryContent = `${summary}\n\nSource: ${entry.path}\nObsidian: ${deepLink}`
       const sourceRef = `obsidian:${entry.path}`
 
       // Upsert to Locigram
