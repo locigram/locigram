@@ -171,26 +171,22 @@ export function createApp(config: AppConfig) {
         },
         body: JSON.stringify({
           model,
-          messages: [
-            { role: 'system', content: 'You are a concise summarizer. Output only your final answer — no thinking process, no preamble, no meta-commentary.' },
-            { role: 'user', content: wrappedPrompt },
-          ],
+          messages: [{ role: 'user', content: wrappedPrompt + ' /no_think' }],
           max_tokens: maxTokens ?? 2000,
-          enable_thinking: false,
         }),
       })
 
       const text = await res.text()
       const parsed = JSON.parse(text)
       const content = parsed.choices?.[0]?.message?.content ?? ''
-      let cleaned = content
-        .replace(/<think>[\s\S]*?<\/think>/g, '')          // strip <think> tags
-        .replace(/^Thinking Process:[\s\S]*?\n\n(?=\S)/m, '') // strip plain-text "Thinking Process:" blocks
-        .trim()
-      // Strip plain-text thinking blocks (models that don't use <think> tags)
-      const domainMarker = cleaned.indexOf('**Domain:**')
-      if (domainMarker > 0) {
-        cleaned = cleaned.slice(domainMarker)
+      // Strip <think> tags (Qwen3 native thinking blocks)
+      let cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+      // Strip plain-text thinking blocks — "Thinking Process:" up to first blank line after content
+      cleaned = cleaned.replace(/^Thinking Process:[\s\S]*?(?=\n\n[^*\d\s])/m, '').trim()
+      // Final fallback: if still starts with "Thinking Process:", strip to first non-bullet paragraph
+      if (cleaned.startsWith('Thinking Process:')) {
+        const firstRealPara = cleaned.search(/\n\n(?![\s*\d])/)
+        if (firstRealPara !== -1) cleaned = cleaned.slice(firstRealPara).trim()
       }
 
       // Split into narrative + structured
