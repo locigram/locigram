@@ -4,6 +4,7 @@ import { eq, and, gte, desc, sql, isNull, inArray, or, like } from 'drizzle-orm'
 import type { DB } from '@locigram/db'
 import type { Palace } from '@locigram/db'
 import type { SearchOptions, SearchResult } from '@locigram/vector'
+import { runQueryWithResult } from '../graph/graph-client'
 
 // ── Vector operations interface ──────────────────────────────────────────────
 
@@ -295,10 +296,46 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           .orderBy(desc(truths.confidence))
           .limit(5)
 
+        // GraphRAG: hop from known memory IDs through the graph to find
+        // structurally related memories (same session, same agent, same locus path)
+        // that the flat Postgres query might have missed (e.g. older but connected)
+        let graphMemories: typeof recentMemories = []
+        try {
+          const knownIds = recentMemories.map(m => m.id)
+          const agentName = locus ? locus.split('/')[1] : undefined
+
+          if (agentName) {
+            // Traverse: Agent -> Sessions -> all Memories in those sessions
+            const graphRows = await runQueryWithResult<{ id: string }>(
+              `MATCH (a:Agent {name: $agentName})<-[:RUN_BY]-(s:Session)<-[:PART_OF]-(m:Memory)
+               WHERE NOT m.id IN $knownIds
+               RETURN DISTINCT m.id AS id
+               LIMIT 10`,
+              { agentName, knownIds }
+            )
+
+            if (graphRows.length > 0) {
+              const graphIds = graphRows.map(r => r.id)
+              const extra = await db.select().from(locigrams)
+                .where(and(
+                  eq(locigrams.palaceId, palaceId),
+                  isNull(locigrams.expiresAt),
+                  inArray(locigrams.id, graphIds),
+                ))
+              graphMemories = extra
+            }
+          }
+        } catch (e) {
+          console.warn('[graph] memory_session_start traversal failed:', e)
+        }
+
+        const allMemories = [...recentMemories, ...graphMemories]
+
         return {
-          recentMemories,
+          recentMemories: allMemories,
           truths: recentTruths,
-          summary: `Found ${recentMemories.length} recent memories and ${recentTruths.length} truths from the last ${lookbackDays} days.`,
+          graphEnriched: graphMemories.length > 0,
+          summary: `Found ${recentMemories.length} recent memories${graphMemories.length > 0 ? ` + ${graphMemories.length} graph-connected` : ''} and ${recentTruths.length} truths from the last ${lookbackDays} days.`,
         }
       },
     },
