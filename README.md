@@ -329,6 +329,11 @@ curl -X POST http://localhost:3000/api/webhook/ingest \
 | `API_TOKEN` | Bearer token for API authentication |
 | `POSTGRES_PASSWORD` | Postgres password |
 
+### Graph Layer (optional — enables Memgraph)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEMGRAPH_URL` | _(blank — graph disabled)_ | Bolt connection string e.g. `bolt://memgraph:7687`. When set, the graph-worker starts automatically and all writes are mirrored to Memgraph. When blank, graph features are silently skipped — Postgres + Qdrant continue working normally. |
+
 ### LLM — Embedding
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -547,7 +552,7 @@ mcporter call locigram.memory_correct --args '{"oldId":"<uuid>","correction":"Th
 | `memory_context` | Proactive context for current task. Hybrid recency + semantic. |
 | `memory_client` | All memories for a specific client ID. Business use case: pull everything known about a client before an interaction. |
 | `memory_reference` | Precise lookup for stable reference data (IPs, contracts, contacts, software versions). Authoritative, not semantic. |
-| `memory_session_start` | **Compaction recovery.** Returns recent decisions + active context for a given agent locus. Call this immediately after context compaction to recover state. |
+| `memory_session_start` | **Compaction recovery.** Returns recent decisions + active context for a given agent locus. Call this immediately after context compaction to recover state. When Memgraph is configured, also runs a GraphRAG traversal to surface session-connected memories that fall outside the Postgres time-range window — response includes `graphEnriched: true` when graph results were merged in. |
 | `people_lookup` | All memories and entity profile for a named person. |
 | `truth_get` | High-confidence promoted facts only. Min confidence filter. |
 | `recent_activity` | Browse memories by time window. |
@@ -648,22 +653,27 @@ Legacy flat loci (`agent/{name}`) are automatically mapped to `agent/{name}/cont
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│                  Locigram                   │
-│                                             │
-│  REST API + MCP  ←→  Pipeline  ←→  Qdrant  │
-│        ↕                 ↕                  │
-│     Postgres       LLM (embed/extract)      │
-│        ↑                                    │
-│   Connectors (M365, HaloPSA, Gmail, ...)    │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                            Locigram                              │
+│                                                                  │
+│  REST API + MCP  ←→  Pipeline  ←→  Qdrant (vector search)       │
+│        ↕                 ↕                ↕                      │
+│     Postgres       LLM (embed/extract)  Memgraph (graph layer)  │
+│        ↑                                    ↑                    │
+│   Connectors (M365, HaloPSA, Gmail, ...)    │                   │
+│                          Background Workers ┘                    │
+│          embed-worker · graph-worker · truth-engine              │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-- **Postgres** — structured storage (locigrams, truths, entities, sources, retrieval_events)
-- **Qdrant** — vector search for semantic recall (hot + warm tier only; cold = Postgres-only)
+- **Postgres** — source of truth: structured storage (locigrams, truths, entities, sources, retrieval_events). Only layer that needs to be backed up — everything else is derived and rebuildable.
+- **Qdrant** — vector search for semantic recall (hot + warm tier only; cold = Postgres-only). Populated by background embed-worker every 30s.
+- **Memgraph** — graph layer: stores Memory, Agent, Session, Palace, and Locus nodes connected by typed edges (`IN_PALACE`, `HAS_LOCUS`, `OWNED_BY`, `PART_OF`, `RUN_BY`). Powers GraphRAG traversal in `memory_session_start` — surfaces session-connected memories that fall outside the Postgres time-range window. Populated by background graph-worker every 30s.
 - **Pipeline** — ingests raw content, calls LLM to extract entities + memory units
 - **Truth engine** — promotes repeated facts into truths with confidence scores; merges co-retrieved clusters
 - **Connectors** — pull from external sources; auto-activated by env vars
+- **Embed worker** — background process, polls `embedding_id IS NULL` every 30s, embeds and upserts to Qdrant. Durable — if Qdrant is down, records queue up and sync on recovery.
+- **Graph worker** — background process, polls `graph_synced_at IS NULL` every 30s, writes to Memgraph. Durable — if Memgraph is down, records queue up and sync on recovery. Same pattern as embed-worker.
 - **Sweep worker** — nightly K8s CronJob (2am); two bulk SQL statements — CTE computes inverse power-law decay scores + updates tiers in one roundtrip; second statement queues cold noise for LLM re-assessment; near-zero memory footprint at any scale
 - **Cluster worker** — weekly K8s CronJob; co-occurrence analysis on retrieval history, flags frequently co-retrieved locigrams for truth merging
 
@@ -730,7 +740,8 @@ Every memory unit ever stored. One table, all sources. Columns handle the segmen
 | `confidence` | `REAL` | `1.0` | Extraction confidence score (`0.0–1.0`). Locigrams below `MIN_CONFIDENCE` (0.3) are dropped before storage. |
 | `metadata` | `JSONB` | `{}` | Connector-specific fields that don't warrant their own column. Email: `{sender, subject, mailbox}`. Ticket: `{priority, sla_state, category}`. GIN-indexed for key-based queries. |
 | **Vector** | | | |
-| `embedding_id` | `TEXT` | `NULL` | Qdrant point ID. `NULL` = pending embed. Background worker picks up `embedding_id IS NULL AND tier IN ('hot','warm')` every 30s. |
+| `embedding_id` | `TEXT` | `NULL` | Qdrant point ID. `NULL` = pending embed. Embed-worker picks up `embedding_id IS NULL AND tier IN ('hot','warm')` every 30s. |
+| `graph_synced_at` | `TIMESTAMPTZ` | `NULL` | Set when this record has been written to Memgraph. `NULL` = pending graph write. Graph-worker polls this every 30s. If Memgraph is down, records queue here and sync on recovery — no data loss. |
 | `palace_id` | `TEXT FK` | — | References `palaces(id) ON DELETE CASCADE` |
 | **Access scoring** | | | |
 | `access_count` | `INT` | `0` | Incremented every time this locigram is returned by a recall query. |
@@ -837,6 +848,7 @@ This is a more direct truth promotion signal than time-based reinforcement: co-r
 | `locigrams_reference_type_idx` | btree (partial) | Reference type queries |
 | `locigrams_occurred_at_idx` | btree (partial) | Temporal queries |
 | `locigrams_embedding_pending_idx` | btree (partial) | Embed worker pickup — `embedding_id IS NULL AND tier IN ('hot','warm')` |
+| `locigrams_graph_synced_idx` | btree | Graph worker pickup — `palace_id, graph_synced_at` |
 | `locigrams_entities_gin` | GIN | Array containment: `WHERE 'Acme Corp' = ANY(entities)` |
 | `locigrams_metadata_gin` | GIN | JSONB key queries on connector-specific fields |
 | `locigrams_fts_idx` | GIN | Full-text keyword search alongside semantic (Qdrant) search |
@@ -930,7 +942,12 @@ Entity resolution (match by name or alias → create if new)
     ↓
 Store locigrams (tier=hot, confidence filter: drop < 0.3)
     ↓
-Background embed worker (30s interval) → Qdrant upsert (hot + warm only)
+Background embed-worker (30s interval) → Qdrant upsert (hot + warm only)
+    ↓                                   [sets embedding_id on success]
+Background graph-worker (30s interval) → Memgraph write
+    ↓  Nodes: Memory · Agent · Session · Palace · Locus
+       Edges: IN_PALACE · HAS_LOCUS · OWNED_BY · PART_OF · RUN_BY
+       [sets graph_synced_at on success; retries on next tick if Memgraph unreachable]
     ↓
 Truth engine (every 6h, knowledge only)
     → Detect reinforcement groups (locus + entity overlap, 90-day window)
@@ -946,19 +963,66 @@ Truth engine (every 6h, knowledge only)
 | Package | Purpose |
 |---------|---------|
 | `@locigram/core` | Shared types + Zod schemas |
-| `@locigram/db` | Drizzle schema + raw SQL migrations |
-| `@locigram/server` | Hono REST API + MCP stubs |
+| `@locigram/db` | Drizzle schema + raw SQL migrations (`migrate.ts` is the ground truth — runs as a K8s initContainer on every deploy) |
+| `@locigram/server` | Hono REST API + MCP server. Includes background workers: embed-worker, graph-worker, truth-engine. Graph layer lives in `src/graph/` — `graph-client.ts` (Bolt driver), `graph-write.ts` (MERGE nodes + edges), `graph-worker.ts` (poll-based durable sync), `migrate-to-graph.ts` (one-shot backfill). |
 | `@locigram/pipeline` | Ingestion, LLM extraction, dedup, entity resolution |
 | `@locigram/truth` | Truth engine — promotion, decay, confidence scoring |
 | `@locigram/vector` | Qdrant wrapper — embed, upsert, search |
 | `@locigram/registry` | Connector plugin registry |
 | `@locigram/connector-*` | Data source connectors |
+| `packages/connectors/session-monitor` | OpenClaw session monitor daemon — watches agent JSONL files, generates handoff summaries, pushes to Locigram via `POST /api/sessions/ingest`. Supports dynamic agent discovery, concurrent multi-session tracking, fleet status, heartbeats. |
 
 ## Deploying on Kubernetes
 
 See [`deploy/k8s/`](deploy/k8s/) for Kubernetes manifests.  
 Each palace gets its own namespace, Longhorn PVCs, and NodePort services.
 
+## Graph Layer (Memgraph)
+
+When `MEMGRAPH_URL` is set, Locigram activates its graph layer. This is optional — everything works without it.
+
+### What the graph stores
+
+Every memory written to Locigram is also written to Memgraph as a connected node graph:
+
+```
+(Memory) -[:IN_PALACE]->  (Palace)
+(Memory) -[:HAS_LOCUS]->  (Locus)
+(Memory) -[:OWNED_BY]->   (Agent)
+(Memory) -[:PART_OF]->    (Session)
+(Session)-[:RUN_BY]->     (Agent)
+```
+
+### How graph-worker works
+
+The graph-worker is a background process that starts automatically with the server when `MEMGRAPH_URL` is set. It polls Postgres for records where `graph_synced_at IS NULL` every 30 seconds, writes them to Memgraph via Bolt, then sets `graph_synced_at` on success.
+
+If Memgraph is unreachable, records remain with `graph_synced_at = NULL`. They are retried on the next tick — no writes are lost. This is the same durable pattern used by the embed-worker for Qdrant.
+
+### GraphRAG in `memory_session_start`
+
+When the graph layer is active, `memory_session_start` runs two queries in parallel:
+
+1. **Postgres** — recent memories within the lookback window (`locus LIKE 'agent/main/%'`)
+2. **Memgraph** — graph traversal from the agent node, following `(Agent)<-[:RUN_BY]-(Session)<-[:PART_OF]-(Memory)` to surface memories connected to your sessions that fall *outside* the Postgres time window
+
+Results are merged and deduplicated. The response includes `"graphEnriched": true` when Memgraph contributed memories not already in the Postgres result set.
+
+Over time as the graph fills up with older sessions, the GraphRAG traversal returns increasingly rich context — it's essentially recovering memories that are too old for the time-range query but are still contextually connected to your active work.
+
+### Running a backfill
+
+If you add `MEMGRAPH_URL` to an existing deployment, run the migration script to backfill all existing records:
+
+```bash
+# From within the server package
+DATABASE_URL=postgresql://... MEMGRAPH_URL=bolt://... bun run src/graph/migrate-to-graph.ts
+```
+
+This sets `graph_synced_at` on every successfully migrated record. The graph-worker handles any that fail.
+
+---
+
 ## Status
 
-🚧 Early development — not ready for production use.
+🟡 Active development — deployed in production, API surface stabilizing.
