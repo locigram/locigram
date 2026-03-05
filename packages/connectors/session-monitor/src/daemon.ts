@@ -49,7 +49,7 @@ interface AgentWatcherState {
 
 // ── State ────────────────────────────────────────────────────────────────────
 
-const agentWatchers = new Map<string, AgentWatcherState>()
+const sessionWatchers = new Map<string, AgentWatcherState>()
 let shuttingDown = false
 
 // ── Logging ──────────────────────────────────────────────────────────────────
@@ -89,37 +89,24 @@ function resolveActiveContextPath(): string | null {
 
 // ── Session file discovery ───────────────────────────────────────────────────
 
-async function findNewestSessionFile(agentName: string): Promise<string | null> {
+async function findAllActiveSessions(agentName: string): Promise<string[]> {
   const sessionsDir = path.join(config.agentsDir, agentName, 'sessions')
   let files: string[] = []
   try {
     files = await fsp.readdir(sessionsDir)
-  } catch (error) {
-    warn(`unable to read sessions dir ${sessionsDir}: ${String(error)}`, agentName)
-    return null
-  }
+  } catch { return [] }
 
-  let newestPath: string | null = null
-  let newestMtime = -1
-  let newestSize = -1
-
+  const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000
+  const active: string[] = []
   for (const file of files) {
     if (!file.endsWith('.jsonl')) continue
     const full = path.join(sessionsDir, file)
     try {
       const st = await fsp.stat(full)
-      const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000
-      const recentlyActive = st.mtimeMs > twoHoursAgo
-      const score = recentlyActive ? st.size : 0
-      if (score > newestSize || (score === newestSize && st.mtimeMs > newestMtime)) {
-        newestSize = score
-        newestMtime = st.mtimeMs
-        newestPath = full
-      }
+      if (st.mtimeMs > twoHoursAgo && st.size > 0) active.push(full)
     } catch { /* skip */ }
   }
-
-  return newestPath
+  return active
 }
 
 function deriveSessionId(filePath: string): string {
@@ -573,20 +560,17 @@ async function startupReconciliation(): Promise<void> {
 
 // ── Multi-agent awareness ────────────────────────────────────────────────────
 
-async function logAgentDirCount(): Promise<void> {
+async function logFleetStatus(): Promise<void> {
   try {
     const entries = await fsp.readdir(config.agentsDir)
     let agentCount = 0
     for (const entry of entries) {
       const sessionsDir = path.join(config.agentsDir, entry, 'sessions')
-      try {
-        await fsp.access(sessionsDir, fs.constants.F_OK)
-        agentCount++
-      } catch { /* not an agent dir */ }
+      try { await fsp.access(sessionsDir, fs.constants.F_OK); agentCount++ } catch { /* skip */ }
     }
-    log(`multi-agent: ${agentCount} agent session dir(s) found in ${config.agentsDir}`)
+    log(`fleet: ${sessionWatchers.size} active sessions across ${agentCount} agent dirs`)
   } catch {
-    log('multi-agent: unable to scan agents dir')
+    log('fleet: unable to scan agents dir')
   }
 }
 
@@ -649,13 +633,63 @@ async function attachSessionFile(sessionPath: string, state: AgentWatcherState):
   })
 }
 
-// ── Session scanning ─────────────────────────────────────────────────────────
+// ── Dynamic fleet discovery ──────────────────────────────────────────────────
 
-async function scanAndMaybeSwitchSession(state: AgentWatcherState): Promise<void> {
-  const newest = await findNewestSessionFile(state.agentName)
-  if (!newest || newest === state.currentSessionPath) return
-  try { await attachSessionFile(newest, state) }
-  catch (error) { warn(`failed to attach session file ${newest}: ${String(error)}`, state.agentName) }
+async function discoverAndSyncSessions(): Promise<void> {
+  let agentDirs: string[] = []
+  try {
+    agentDirs = await fsp.readdir(config.agentsDir)
+  } catch { return }
+
+  const activeKeys = new Set<string>()
+
+  for (const agentName of agentDirs) {
+    const sessionsDir = path.join(config.agentsDir, agentName, 'sessions')
+    try { await fsp.access(sessionsDir) } catch { continue }
+
+    const activePaths = await findAllActiveSessions(agentName)
+    for (const sessionPath of activePaths) {
+      const sessionId = deriveSessionId(sessionPath)
+      const key = `${agentName}:${sessionId}`
+      activeKeys.add(key)
+
+      if (!sessionWatchers.has(key)) {
+        const state: AgentWatcherState = {
+          agentName,
+          currentSessionPath: null,
+          currentSessionId: sessionId,
+          lastReadPosition: 0,
+          pendingLineBuffer: '',
+          parsedMessageCount: 0,
+          sectionNumber: 1,
+          lastHandoffAt: 0,
+          lastSummaryMessageCount: 0,
+          lastSessionSwitchAt: 0,
+          lastStructured: null,
+          pendingActionHistory: new Map(),
+        }
+        sessionWatchers.set(key, state)
+        log(`new session discovered: ${agentName}/${sessionId}`, agentName)
+        try { await attachSessionFile(sessionPath, state) }
+        catch (error) { warn(`failed to attach ${sessionPath}: ${String(error)}`, agentName) }
+      }
+    }
+  }
+
+  // Prune stale sessions
+  for (const [key, state] of sessionWatchers.entries()) {
+    if (!activeKeys.has(key)) {
+      log(`session went stale, removing: ${key}`, state.agentName)
+      if (state.currentSessionPath) {
+        fs.unwatchFile(state.currentSessionPath)
+        try {
+          const sizeMb = (await fsp.stat(state.currentSessionPath)).size / (1024 * 1024)
+          await triggerHandoffDump(sizeMb, state, 'session-stale')
+        } catch { /* best effort */ }
+      }
+      sessionWatchers.delete(key)
+    }
+  }
 }
 
 // ── Shutdown ─────────────────────────────────────────────────────────────────
@@ -669,14 +703,13 @@ function setupShutdownHandlers(sessionTimer: NodeJS.Timeout, projectTimer: NodeJ
     if (projectTimer) clearInterval(projectTimer)
     if (heartbeatTimer) clearInterval(heartbeatTimer)
 
-    for (const state of agentWatchers.values()) {
+    for (const state of sessionWatchers.values()) {
       if (state.currentSessionPath) fs.unwatchFile(state.currentSessionPath)
       try {
         const sizeMb = state.currentSessionPath ? (await fsp.stat(state.currentSessionPath)).size / (1024 * 1024) : 0
         await triggerHandoffDump(sizeMb, state, 'shutdown')
       } catch (error) { warn(`shutdown handoff failed: ${String(error)}`, state.agentName) }
 
-      // End-of-session final snapshot (active-context.json — primary only, checked inside)
       try {
         await writeActiveContext(state.lastStructured, state, true)
       } catch (error) { warn(`final snapshot write failed: ${String(error)}`, state.agentName) }
@@ -692,7 +725,7 @@ function setupShutdownHandlers(sessionTimer: NodeJS.Timeout, projectTimer: NodeJ
 
 export function startDaemon(): void {
   log('daemon started')
-  log(`watching agents: ${config.watchAgents.join(', ')}`)
+  log('mode: dynamic discovery — all agents, all active sessions, auto-detected')
   log(`summary every ${config.summaryEveryN} messages`)
   log(`compaction threshold: ${config.compactionMb}mb`)
   if (config.handoffPath) log(`handoff path: ${config.handoffPath}`)
@@ -701,64 +734,37 @@ export function startDaemon(): void {
   if (config.discordWebhookUrl) log('discord: webhook configured')
   log(`locigram: ${config.locigramUrl}`)
 
-  // Multi-agent awareness
-  void logAgentDirCount()
-
-  // Startup reconciliation (primary agent only)
   void startupReconciliation()
+  void discoverAndSyncSessions()
 
-  // Initialize watcher state for each agent
-  for (const agentName of config.watchAgents) {
-    const state: AgentWatcherState = {
-      agentName,
-      currentSessionPath: null,
-      currentSessionId: 'unknown',
-      lastReadPosition: 0,
-      pendingLineBuffer: '',
-      parsedMessageCount: 0,
-      sectionNumber: 1,
-      lastHandoffAt: 0,
-      lastSummaryMessageCount: 0,
-      lastSessionSwitchAt: 0,
-      lastStructured: null,
-      pendingActionHistory: new Map(),
-    }
-    agentWatchers.set(agentName, state)
-
-    const sessionsDir = path.join(config.agentsDir, agentName, 'sessions')
-    log(`agent: ${agentName}`, agentName)
-    log(`sessions dir: ${sessionsDir}`, agentName)
-
-    void scanAndMaybeSwitchSession(state)
-  }
-
-  // Session timer scans all agents
+  // Discovery timer — scans all agent dirs every 30s
   const sessionTimer = setInterval(() => {
-    for (const state of agentWatchers.values()) {
-      void scanAndMaybeSwitchSession(state)
-    }
+    void discoverAndSyncSessions()
   }, config.sessionScanMs)
 
-  // Project detection for all agents
+  // Project detection for all active sessions
   let projectTimer: NodeJS.Timeout | null = null
   if (config.workspaceRoot && config.obsidianVault) {
     projectTimer = setInterval(() => {
-      for (const state of agentWatchers.values()) {
+      for (const state of sessionWatchers.values()) {
         void detectProject(state)
       }
     }, config.projectDetectMs)
   }
 
-  // Heartbeat for each agent every 10 minutes
+  // Heartbeat per unique agent name (deduplicated across sessions)
   const HEARTBEAT_INTERVAL_MS = 10 * 60_000
-  for (const state of agentWatchers.values()) {
-    void sendHeartbeat(state)
-  }
-  const heartbeatTimer = setInterval(() => {
-    for (const state of agentWatchers.values()) {
-      void sendHeartbeat(state)
+  const sendAllHeartbeats = async (): Promise<void> => {
+    const seen = new Set<string>()
+    for (const state of sessionWatchers.values()) {
+      if (!seen.has(state.agentName)) {
+        seen.add(state.agentName)
+        void sendHeartbeat(state)
+      }
     }
-  }, HEARTBEAT_INTERVAL_MS)
+  }
+  void sendAllHeartbeats()
+  const heartbeatTimer = setInterval(() => { void sendAllHeartbeats() }, HEARTBEAT_INTERVAL_MS)
 
   setupShutdownHandlers(sessionTimer, projectTimer, heartbeatTimer)
 }

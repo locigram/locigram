@@ -14,7 +14,6 @@ export const config = {
 
   // Agent
   agentName:        process.env.OPENCLAW_AGENT_NAME ?? process.env.AGENT_NAME ?? 'main',
-  watchAgents:      (process.env.LOCIGRAM_WATCH_AGENTS ?? process.env.OPENCLAW_AGENT_NAME ?? 'main').split(',').map(s => s.trim()).filter(Boolean),
   agentType:        (process.env.LOCIGRAM_AGENT_TYPE ?? 'permanent') as 'permanent' | 'ephemeral',
   agentsDir:        process.env.OPENCLAW_AGENTS_DIR ?? expandHome('~/.openclaw/agents'),
 
