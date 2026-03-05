@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { locigrams, sources } from '@locigram/db'
+import { writeMemoryToGraph, parseAgentFromLocus } from '../graph/graph-write'
 
 const schema = z.object({
   content:    z.string().min(1),
@@ -45,6 +46,19 @@ rememberRoute.post('/', zValidator('json', schema), async (c) => {
   }
 
   // TODO: queue embedding (async — don't block response)
+
+  // Fire-and-forget graph write (non-blocking — errors logged, never thrown)
+  void writeMemoryToGraph({
+    id: locigram.id,
+    palaceId: palace.id,
+    locus: body.locus,
+    sourceType: body.sourceType,
+    agentName: parseAgentFromLocus(body.locus),
+    sessionId: (body.metadata as any)?.session_id ?? (body.metadata as any)?.sessionId ?? undefined,
+    importance: null,
+    occurredAt: new Date(),
+    connector: body.connector ?? null,
+  }).catch(e => console.warn('[graph] remember write failed:', e))
 
   return c.json({ id: locigram.id, status: 'stored' }, 201)
 })

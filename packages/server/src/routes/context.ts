@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { sql } from 'drizzle-orm'
 import { locigrams } from '@locigram/db'
+import { runQueryWithResult } from '../graph/graph-client'
 
 // ── GET /api/context/active ─────────────────────────────────────────────────
 // Returns the latest locigram for a given locus (typically agent/{name}/context).
@@ -111,6 +112,36 @@ fleetRoute.get('/', async (c) => {
       agentType: (row.metadata as any)?.agentType ?? 'permanent',
     }
   })
+
+  // Augment with Memgraph: get agents with recent memories from graph
+  // Merges in any agents present in graph but missing from Postgres context locus
+  try {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const graphAgents = await runQueryWithResult<{ agentName: string; lastSeen: string }>(
+      `MATCH (m:Memory)-[:OWNED_BY]->(a:Agent)
+       WHERE m.occurredAt > $cutoff
+       WITH a, m ORDER BY m.occurredAt DESC
+       WITH a, COLLECT(m)[0] AS latest
+       RETURN a.name AS agentName, latest.occurredAt AS lastSeen`,
+      { cutoff }
+    )
+    const seenInPostgres = new Set(agents.map(a => a.agentName))
+    for (const ga of graphAgents) {
+      if (!seenInPostgres.has(ga.agentName)) {
+        agents.push({
+          agentName: ga.agentName,
+          currentTask: null,
+          currentProject: null,
+          blockers: [],
+          domain: null,
+          lastSeen: new Date(ga.lastSeen),
+          agentType: 'permanent',
+        })
+      }
+    }
+  } catch (e) {
+    console.warn('[graph] fleet augment failed:', e)
+  }
 
   return c.json(agents)
 })
