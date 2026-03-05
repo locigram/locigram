@@ -173,9 +173,10 @@ export function createApp(config: AppConfig) {
           model,
           messages: [
             { role: 'system', content: 'You are a concise summarizer. Output only your final answer — no thinking process, no preamble, no meta-commentary.' },
-            { role: 'user', content: wrappedPrompt + ' /no_think' },
+            { role: 'user', content: wrappedPrompt },
           ],
-          max_tokens: maxTokens ?? 2500,
+          max_tokens: maxTokens ?? 2000,
+          enable_thinking: false,
         }),
       })
 
