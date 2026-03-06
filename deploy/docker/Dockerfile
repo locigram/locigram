@@ -15,10 +15,8 @@ COPY packages/server/package.json      ./packages/server/
 COPY packages/connectors/webhook/package.json          ./packages/connectors/webhook/
 COPY packages/connectors/microsoft365/package.json     ./packages/connectors/microsoft365/
 COPY packages/connectors/gmail/package.json            ./packages/connectors/gmail/
-COPY packages/connectors/surudb/package.json           ./packages/connectors/surudb/
 COPY packages/connectors/email/package.json            ./packages/connectors/email/
 COPY packages/connectors/sms/package.json              ./packages/connectors/sms/
-COPY packages/connectors/session-monitor/package.json  ./packages/connectors/session-monitor/
 
 
 # Install deps (workspace-aware)

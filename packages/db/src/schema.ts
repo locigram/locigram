@@ -85,6 +85,7 @@ export const locigrams = pgTable(
     clusterCandidate: boolean('cluster_candidate').notNull().default(false),
 
     palaceId:    palaceId(),
+    connectorInstanceId: uuid('connector_instance_id').references(() => connectorInstances.id, { onDelete: 'set null' }),
   },
   (t) => [
     // Dedup — enforced at DB level
@@ -270,6 +271,7 @@ export const connectorInstances = pgTable(
     palaceId:       text('palace_id').notNull().references(() => palaces.id, { onDelete: 'cascade' }),
     connectorType:  text('connector_type').notNull(),
     name:           text('name').notNull(),
+    distribution:   text('distribution').notNull().default('external'), // 'bundled' | 'external'
     config:         jsonb('config').notNull().default(sql`'{}'`),
     schedule:       text('schedule'),
     cursor:         jsonb('cursor'),

@@ -10,6 +10,7 @@ export interface IngestResult {
   stored:  number
   skipped: number
   errors:  string[]
+  ids:     string[]
 }
 
 // Minimum extraction confidence — locigrams below this are noise and not stored
@@ -29,7 +30,7 @@ export async function ingest(
   db: DB,
   config: PipelineConfig,
 ): Promise<IngestResult> {
-  const result: IngestResult = { stored: 0, skipped: 0, errors: [] }
+  const result: IngestResult = { stored: 0, skipped: 0, errors: [], ids: [] }
 
   for (const raw of rawMemories) {
     try {
@@ -94,6 +95,7 @@ export async function ingest(
         })
 
         result.stored++
+        result.ids.push(stored.id)
         storedAny = true
       }
 

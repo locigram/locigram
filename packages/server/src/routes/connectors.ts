@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { connectorInstances, connectorSyncs } from '@locigram/db'
-import { eq, and, desc } from 'drizzle-orm'
+import { connectorInstances, connectorSyncs, locigrams } from '@locigram/db'
+import { eq, and, desc, inArray } from 'drizzle-orm'
 import crypto from 'node:crypto'
 import type { ConnectorPlugin, PullResult, RawMemory } from '@locigram/core'
 import { registry } from '@locigram/registry'
@@ -35,6 +35,7 @@ function requireInstanceAccess(c: any, instanceId: string): Response | null {
 const createSchema = z.object({
   connectorType: z.string().min(1),
   name:          z.string().min(1),
+  distribution:  z.enum(['bundled', 'external']).default('external'),
   config:        z.record(z.string(), z.unknown()).default({}),
   schedule:      z.string().nullable().optional(),
 })
@@ -78,6 +79,7 @@ connectorsRoute.post('/', zValidator('json', createSchema), async (c) => {
     palaceId:      palace.id,
     connectorType: body.connectorType,
     name:          body.name,
+    distribution:  body.distribution,
     config:        body.config,
     schedule:      body.schedule ?? null,
     tokenHash:     hash,
@@ -136,13 +138,22 @@ connectorsRoute.delete('/:id', async (c) => {
   const db = c.get('db')
   const palace = c.get('palace')
   const id = c.req.param('id')
+  const dataAction = c.req.query('data') ?? 'keep'
+
+  if (dataAction === 'delete') {
+    await db.delete(locigrams).where(eq(locigrams.connectorInstanceId, id))
+  } else if (dataAction === 'expire') {
+    await db.update(locigrams)
+      .set({ expiresAt: new Date() })
+      .where(eq(locigrams.connectorInstanceId, id))
+  }
 
   const [deleted] = await db.delete(connectorInstances)
     .where(and(eq(connectorInstances.id, id), eq(connectorInstances.palaceId, palace.id)))
     .returning({ id: connectorInstances.id })
 
   if (!deleted) return c.json({ error: 'not found' }, 404)
-  return c.json({ id: deleted.id, status: 'deleted' })
+  return c.json({ id: deleted.id, status: 'deleted', dataAction })
 })
 
 // Trigger manual sync (admin or matching connector token)
@@ -161,6 +172,9 @@ connectorsRoute.post('/:id/sync', async (c) => {
 
   if (!instance) return c.json({ error: 'not found' }, 404)
   if (instance.status === 'disabled') return c.json({ error: 'connector is disabled' }, 400)
+  if (instance.distribution === 'external') {
+    return c.json({ error: 'external connectors should use POST /api/connectors/:id/report to report sync results and POST /api/connectors/:id/ingest to push memories' }, 400)
+  }
 
   // Create sync record
   const [sync] = await db.insert(connectorSyncs).values({
@@ -214,6 +228,120 @@ connectorsRoute.post('/:id/sync', async (c) => {
 
     return c.json({ error: 'sync failed', detail: err.message }, 500)
   }
+})
+
+// Report sync results from external connectors
+const reportSchema = z.object({
+  itemsPulled:  z.number().int().min(0).default(0),
+  itemsPushed:  z.number().int().min(0).default(0),
+  itemsSkipped: z.number().int().min(0).default(0),
+  cursorAfter:  z.unknown().optional(),
+  error:        z.string().optional(),
+  durationMs:   z.number().int().optional(),
+})
+
+connectorsRoute.post('/:id/report', zValidator('json', reportSchema), async (c) => {
+  const id = c.req.param('id')
+  const denied = requireInstanceAccess(c, id)
+  if (denied) return denied
+
+  const db = c.get('db')
+  const palace = c.get('palace')
+  const body = c.req.valid('json')
+
+  const [instance] = await db.select().from(connectorInstances)
+    .where(and(eq(connectorInstances.id, id), eq(connectorInstances.palaceId, palace.id)))
+    .limit(1)
+
+  if (!instance) return c.json({ error: 'not found' }, 404)
+
+  const syncStatus = body.error ? 'failed' : 'completed'
+
+  const [sync] = await db.insert(connectorSyncs).values({
+    instanceId:   id,
+    status:       syncStatus,
+    completedAt:  new Date(),
+    itemsPulled:  body.itemsPulled,
+    itemsPushed:  body.itemsPushed,
+    itemsSkipped: body.itemsSkipped,
+    cursorBefore: instance.cursor,
+    cursorAfter:  body.cursorAfter ?? null,
+    error:        body.error ?? null,
+    durationMs:   body.durationMs ?? null,
+  }).returning()
+
+  await db.update(connectorInstances)
+    .set({
+      lastSyncAt:  new Date(),
+      cursor:      body.cursorAfter ?? instance.cursor,
+      itemsSynced: (instance.itemsSynced ?? 0) + body.itemsPushed,
+      lastError:   body.error ?? null,
+      updatedAt:   new Date(),
+    })
+    .where(eq(connectorInstances.id, id))
+
+  return c.json(sync)
+})
+
+// Ingest memories from external connectors
+const ingestSchema = z.object({
+  memories: z.array(z.object({
+    content:     z.string().min(1),
+    sourceType:  z.string().min(1),
+    sourceRef:   z.string().optional(),
+    occurredAt:  z.string().optional(),
+    locus:       z.string().optional(),
+    importance:  z.enum(['low', 'normal', 'high']).optional(),
+    metadata:    z.record(z.string(), z.unknown()).optional(),
+  })).min(1).max(100),
+})
+
+connectorsRoute.post('/:id/ingest', zValidator('json', ingestSchema), async (c) => {
+  const id = c.req.param('id')
+  const denied = requireInstanceAccess(c, id)
+  if (denied) return denied
+
+  const db = c.get('db')
+  const palace = c.get('palace')
+  const pipelineConfig = c.get('pipelineConfig')
+  const body = c.req.valid('json')
+
+  const [instance] = await db.select().from(connectorInstances)
+    .where(and(eq(connectorInstances.id, id), eq(connectorInstances.palaceId, palace.id)))
+    .limit(1)
+
+  if (!instance) return c.json({ error: 'not found' }, 404)
+  if (instance.status === 'disabled') return c.json({ error: 'connector is disabled' }, 400)
+
+  // Transform to RawMemory[] with enforced lineage
+  const memories = body.memories.map(m => ({
+    content:     m.content,
+    sourceType:  m.sourceType,
+    sourceRef:   m.sourceRef,
+    occurredAt:  m.occurredAt ? new Date(m.occurredAt) : new Date(),
+    locus:       m.locus ?? `connectors/${instance.connectorType}`,
+    metadata: {
+      ...m.metadata,
+      connector: instance.connectorType,
+      connector_instance_id: instance.id,
+      ...(m.importance ? { importance: m.importance } : {}),
+    },
+  }))
+
+  const { ingest } = await import('@locigram/pipeline')
+  const result = await ingest(memories, db, { ...pipelineConfig, palaceId: palace.id })
+
+  // Tag the ingested locigrams with connector_instance_id
+  if (result.ids && result.ids.length > 0) {
+    await db.update(locigrams)
+      .set({ connectorInstanceId: instance.id })
+      .where(inArray(locigrams.id, result.ids))
+  }
+
+  return c.json({
+    ingested: result.stored ?? body.memories.length,
+    skipped:  result.skipped ?? 0,
+  })
 })
 
 // List sync history (admin or matching connector token)
@@ -320,6 +448,13 @@ export async function executeSync(
   // Push through the pipeline
   const { ingest } = await import('@locigram/pipeline')
   const result = await ingest(memories, db, { ...pipelineConfig, palaceId })
+
+  // Tag ingested locigrams with connector_instance_id
+  if (result.ids && result.ids.length > 0) {
+    await db.update(locigrams)
+      .set({ connectorInstanceId: instance.id })
+      .where(inArray(locigrams.id, result.ids))
+  }
 
   return {
     itemsPulled:  memories.length,

@@ -28,6 +28,7 @@ export function startScheduler(opts: SchedulerOpts) {
         and(
           eq(connectorInstances.palaceId, palaceId),
           eq(connectorInstances.status, 'active'),
+          eq(connectorInstances.distribution, 'bundled'),
           isNotNull(connectorInstances.schedule),
         )
       )
