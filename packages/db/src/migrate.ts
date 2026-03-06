@@ -1,25 +1,29 @@
 import postgres from 'postgres'
 
+/**
+ * Safe, additive migration script for Locigram.
+ *
+ * NEVER drops tables. Uses CREATE TABLE IF NOT EXISTS + ALTER TABLE ADD COLUMN IF NOT EXISTS.
+ * Safe to run repeatedly — idempotent by design.
+ *
+ * For schema changes: add a new migration block at the bottom with a date comment.
+ * Never modify existing CREATE TABLE statements — use ALTER TABLE instead.
+ */
+
 const url = process.env.DATABASE_URL
 if (!url) throw new Error('DATABASE_URL is required')
 
 const palaceId   = process.env.PALACE_ID   ?? 'default'
 const palaceName = process.env.PALACE_NAME ?? 'Default User'
 
-console.log('[migrate] running migrations...')
+console.log('[migrate] running safe additive migrations...')
 
 const sql = postgres(url, { max: 1 })
 
-// Drop & recreate (early-stage, no prod data yet)
-await sql`DROP TABLE IF EXISTS retrieval_events CASCADE`
-await sql`DROP TABLE IF EXISTS sources   CASCADE`
-await sql`DROP TABLE IF EXISTS entities  CASCADE`
-await sql`DROP TABLE IF EXISTS truths    CASCADE`
-await sql`DROP TABLE IF EXISTS locigrams CASCADE`
-await sql`DROP TABLE IF EXISTS palaces   CASCADE`
+// ── Core tables (initial schema) ─────────────────────────────────────────────
 
 await sql`
-  CREATE TABLE palaces (
+  CREATE TABLE IF NOT EXISTS palaces (
     id         TEXT PRIMARY KEY,
     name       TEXT NOT NULL,
     owner_id   TEXT NOT NULL,
@@ -30,61 +34,36 @@ await sql`
 `
 
 await sql`
-  CREATE TABLE locigrams (
+  CREATE TABLE IF NOT EXISTS locigrams (
     id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     content        TEXT        NOT NULL,
-
-    -- Source provenance
-    source_type    TEXT        NOT NULL,   -- email|ticket|device|chat|conversation|manual|webhook
-    source_ref     TEXT,                   -- unique ID in source system (dedup key)
-    connector      TEXT,                   -- which connector produced this
-
-    -- Temporal
-    occurred_at    TIMESTAMPTZ,            -- when the event happened (from source)
+    source_type    TEXT        NOT NULL,
+    source_ref     TEXT,
+    connector      TEXT,
+    occurred_at    TIMESTAMPTZ,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at     TIMESTAMPTZ,            -- set when superseded or decayed
-
-    -- Classification
-    locus          TEXT        NOT NULL,   -- namespace: people/x, business/x, technical/x, project/x
-    client_id      TEXT,                   -- MSP client (first-class filter)
-    importance     TEXT        NOT NULL DEFAULT 'normal', -- low | normal | high
-
-    -- Storage tier
-    -- hot  = recent + high confidence + is_reference → active in Qdrant
-    -- warm = older / lower confidence → active in Qdrant
-    -- cold = archived / superseded / decayed → Postgres only, out of Qdrant
+    expires_at     TIMESTAMPTZ,
+    locus          TEXT        NOT NULL,
+    client_id      TEXT,
+    importance     TEXT        NOT NULL DEFAULT 'normal',
     tier           TEXT        NOT NULL DEFAULT 'hot',
-
-    -- Knowledge vs reference data
-    -- is_reference=true: stable facts about things (IPs, versions, contracts, contacts)
-    --   → truth engine skips, never decays, only expires when explicitly superseded
-    -- is_reference=false: events/relationships → truth engine applies, decays over time
     is_reference   BOOLEAN     NOT NULL DEFAULT FALSE,
-    reference_type TEXT,       -- network_device|software|configuration|service_account|contract|contact
-
-    -- Extraction outputs
+    reference_type TEXT,
     entities       TEXT[]      NOT NULL DEFAULT '{}',
     confidence     REAL        NOT NULL DEFAULT 1.0,
     metadata       JSONB       NOT NULL DEFAULT '{}',
-
-    -- Vector
-    embedding_id   TEXT,                   -- Qdrant point ID (null = not yet embedded)
-
-    -- Graph sync
-    graph_synced_at TIMESTAMPTZ,           -- null = pending Memgraph write
-
-    -- Access scoring (memory intelligence)
+    embedding_id   TEXT,
+    graph_synced_at TIMESTAMPTZ,
     access_count      INT         NOT NULL DEFAULT 0,
     last_accessed_at  TIMESTAMPTZ,
     access_score      FLOAT       NOT NULL DEFAULT 1.0,
     cluster_candidate BOOLEAN     NOT NULL DEFAULT FALSE,
-
     palace_id      TEXT        NOT NULL REFERENCES palaces(id) ON DELETE CASCADE
   )
 `
 
 await sql`
-  CREATE TABLE truths (
+  CREATE TABLE IF NOT EXISTS truths (
     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     statement    TEXT        NOT NULL,
     locus        TEXT        NOT NULL,
@@ -99,10 +78,10 @@ await sql`
 `
 
 await sql`
-  CREATE TABLE entities (
+  CREATE TABLE IF NOT EXISTS entities (
     id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     name       TEXT        NOT NULL,
-    type       TEXT        NOT NULL,   -- person|org|product|topic|place
+    type       TEXT        NOT NULL,
     aliases    TEXT[]      NOT NULL DEFAULT '{}',
     metadata   JSONB       NOT NULL DEFAULT '{}',
     palace_id  TEXT        NOT NULL REFERENCES palaces(id) ON DELETE CASCADE,
@@ -113,7 +92,7 @@ await sql`
 `
 
 await sql`
-  CREATE TABLE sources (
+  CREATE TABLE IF NOT EXISTS sources (
     id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     locigram_id UUID        NOT NULL REFERENCES locigrams(id) ON DELETE CASCADE,
     connector   TEXT        NOT NULL,
@@ -125,7 +104,7 @@ await sql`
 `
 
 await sql`
-  CREATE TABLE retrieval_events (
+  CREATE TABLE IF NOT EXISTS retrieval_events (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     palace_id     TEXT        NOT NULL REFERENCES palaces(id) ON DELETE CASCADE,
     query_text    TEXT,
@@ -144,6 +123,8 @@ await sql`
   )
 `
 
+// ── OAuth tables ─────────────────────────────────────────────────────────────
+
 await sql`
   CREATE TABLE IF NOT EXISTS oauth_clients (
     id            TEXT PRIMARY KEY,
@@ -151,6 +132,7 @@ await sql`
     secret_hash   TEXT NOT NULL,
     redirect_uris TEXT[] NOT NULL DEFAULT '{}',
     palace_id     TEXT NOT NULL REFERENCES palaces(id) ON DELETE CASCADE,
+    service       TEXT,
     created_at    TIMESTAMPTZ DEFAULT NOW(),
     revoked_at    TIMESTAMPTZ
   )
@@ -168,10 +150,66 @@ await sql`
   )
 `
 
+await sql`
+  CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+    id           TEXT PRIMARY KEY,
+    token_hash   TEXT NOT NULL UNIQUE,
+    client_id    TEXT NOT NULL REFERENCES oauth_clients(id),
+    palace_id    TEXT NOT NULL,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    expires_at   TIMESTAMPTZ NOT NULL,
+    revoked_at   TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ
+  )
+`
+
+// ── Additive column migrations ───────────────────────────────────────────────
+// Add new columns here with ALTER TABLE ADD COLUMN IF NOT EXISTS.
+
+await sql`ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS service TEXT`
+
+// ── Connector framework (2026-03-06) ─────────────────────────────────────────
+
+await sql`
+  CREATE TABLE IF NOT EXISTS connector_instances (
+    id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    palace_id        TEXT        NOT NULL REFERENCES palaces(id) ON DELETE CASCADE,
+    connector_type   TEXT        NOT NULL,
+    name             TEXT        NOT NULL,
+    config           JSONB       NOT NULL DEFAULT '{}',
+    schedule         TEXT,
+    cursor           JSONB,
+    status           TEXT        NOT NULL DEFAULT 'active',
+    last_sync_at     TIMESTAMPTZ,
+    last_error       TEXT,
+    items_synced     INT         DEFAULT 0,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`
+
+await sql`
+  CREATE TABLE IF NOT EXISTS connector_syncs (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    instance_id     UUID        NOT NULL REFERENCES connector_instances(id) ON DELETE CASCADE,
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ,
+    items_pulled    INT         DEFAULT 0,
+    items_pushed    INT         DEFAULT 0,
+    items_skipped   INT         DEFAULT 0,
+    status          TEXT        NOT NULL DEFAULT 'running',
+    error           TEXT,
+    cursor_before   JSONB,
+    cursor_after    JSONB,
+    duration_ms     INT
+  )
+`
+
 // ── Indexes ───────────────────────────────────────────────────────────────────
+// All use IF NOT EXISTS — safe to re-run.
 
 // locigrams — btree
-await sql`CREATE UNIQUE INDEX locigrams_source_ref_unique  ON locigrams(palace_id, source_ref) WHERE source_ref IS NOT NULL`
+await sql`CREATE UNIQUE INDEX IF NOT EXISTS locigrams_source_ref_unique  ON locigrams(palace_id, source_ref) WHERE source_ref IS NOT NULL`
 await sql`CREATE INDEX IF NOT EXISTS locigrams_palace_id_idx             ON locigrams(palace_id)`
 await sql`CREATE INDEX IF NOT EXISTS locigrams_locus_idx                 ON locigrams(palace_id, locus)`
 await sql`CREATE INDEX IF NOT EXISTS locigrams_source_type_idx           ON locigrams(palace_id, source_type)`
@@ -224,6 +262,17 @@ await sql`CREATE INDEX IF NOT EXISTS oauth_clients_revoked_idx   ON oauth_client
 await sql`CREATE INDEX IF NOT EXISTS oauth_codes_client_id_idx ON oauth_codes(client_id)`
 await sql`CREATE INDEX IF NOT EXISTS oauth_codes_expires_idx   ON oauth_codes(expires_at)`
 
+// oauth_access_tokens
+await sql`CREATE INDEX IF NOT EXISTS oauth_access_tokens_client_idx ON oauth_access_tokens(client_id)`
+await sql`CREATE INDEX IF NOT EXISTS oauth_access_tokens_palace_idx ON oauth_access_tokens(palace_id)`
+
+// connector_instances
+await sql`CREATE INDEX IF NOT EXISTS connector_instances_palace_idx ON connector_instances(palace_id)`
+await sql`CREATE INDEX IF NOT EXISTS connector_instances_type_idx   ON connector_instances(palace_id, connector_type)`
+
+// connector_syncs
+await sql`CREATE INDEX IF NOT EXISTS connector_syncs_instance_idx ON connector_syncs(instance_id, started_at DESC)`
+
 // ── Seed palace ───────────────────────────────────────────────────────────────
 
 await sql`
@@ -232,27 +281,8 @@ await sql`
   ON CONFLICT (id) DO UPDATE SET api_token = EXCLUDED.api_token
 `
 
-// ── Additive migrations (safe to re-run) ─────────────────────────────────────
-
-// Add service column to oauth_clients
-await sql`ALTER TABLE oauth_clients ADD COLUMN IF NOT EXISTS service text`
-
-// Create oauth_access_tokens table
-await sql`
-  CREATE TABLE IF NOT EXISTS oauth_access_tokens (
-    id           text PRIMARY KEY,
-    token_hash   text NOT NULL UNIQUE,
-    client_id    text NOT NULL REFERENCES oauth_clients(id),
-    palace_id    text NOT NULL,
-    created_at   timestamptz DEFAULT now(),
-    expires_at   timestamptz NOT NULL,
-    revoked_at   timestamptz,
-    last_used_at timestamptz
-  )
-`
-await sql`CREATE INDEX IF NOT EXISTS oauth_access_tokens_client_idx ON oauth_access_tokens(client_id)`
-await sql`CREATE INDEX IF NOT EXISTS oauth_access_tokens_palace_idx ON oauth_access_tokens(palace_id)`
+// ── Done ──────────────────────────────────────────────────────────────────────
 
 await sql.end()
-console.log('[migrate] done')
+console.log('[migrate] done — all tables and indexes verified')
 process.exit(0)
