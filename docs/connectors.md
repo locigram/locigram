@@ -66,14 +66,17 @@ curl -X POST https://your-locigram/api/connectors \
 The connector then uses this token for all API calls:
 
 ```bash
-# Connector pushes memories
-curl -X POST https://your-locigram/api/ingest \
+# Connector pushes memories (server enforces lineage tagging)
+curl -X POST https://your-locigram/api/connectors/INSTANCE_ID/ingest \
   -H "Authorization: Bearer lc_abc123..." \
-  -d '{"content": "...", "sourceType": "ticket", "sourceRef": "T-1234"}'
+  -H "Content-Type: application/json" \
+  -d '{"memories": [{"content": "...", "sourceType": "ticket", "sourceRef": "T-1234"}]}'
 
 # Connector reports sync completion
-curl -X POST https://your-locigram/api/connectors/INSTANCE_ID/sync \
-  -H "Authorization: Bearer lc_abc123..."
+curl -X POST https://your-locigram/api/connectors/INSTANCE_ID/report \
+  -H "Authorization: Bearer lc_abc123..." \
+  -H "Content-Type: application/json" \
+  -d '{"itemsPulled": 25, "itemsPushed": 20, "itemsSkipped": 5}'
 ```
 
 **Token properties:**
@@ -93,13 +96,15 @@ Connector instances are managed per-palace via REST API and MCP tools.
 - `POST /api/connectors` — Create instance (returns connector token)
 - `GET /api/connectors/:id` — Get details + recent syncs
 - `PATCH /api/connectors/:id` — Update config/schedule/status
-- `DELETE /api/connectors/:id` — Delete instance + revoke token
+- `DELETE /api/connectors/:id?data=keep|delete|expire` — Delete instance + revoke token (with data cleanup options)
 - `POST /api/connectors/:id/token/rotate` — Rotate connector token
+- `POST /api/connectors/:id/sync` — Trigger sync (bundled connectors only)
 
 ### REST Endpoints (connector — connector token)
 - `GET /api/connectors/:id` — Read own status/cursor
-- `POST /api/connectors/:id/sync` — Report sync completion
-- `POST /api/ingest` — Push memories (tagged with connector ID)
+- `POST /api/connectors/:id/ingest` — Push memories (server enforces `connector_instance_id` lineage)
+- `POST /api/connectors/:id/report` — Report sync results (items pulled/pushed/skipped, cursor, errors)
+- `GET /api/connectors/:id/syncs` — View own sync history
 
 ### MCP Tools
 - `connectors_list` — List connector instances
@@ -153,30 +158,36 @@ const INSTANCE_ID = process.env.LOCIGRAM_INSTANCE_ID // connector instance UUID
 // 1. Pull data from your source
 const items = await fetchFromMySource(cursor)
 
-// 2. Push each item to Locigram
-for (const item of items) {
-  await fetch(`${LOCIGRAM_URL}/api/ingest`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      content: item.summary,
+// 2. Push memories to Locigram (batched, up to 100 per call)
+const res = await fetch(`${LOCIGRAM_URL}/api/connectors/${INSTANCE_ID}/ingest`, {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${TOKEN}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    memories: items.map(item => ({
+      content:    item.summary,
       sourceType: 'my-source',
-      sourceRef: item.id,
+      sourceRef:  item.id,
       occurredAt: item.timestamp,
-    }),
-  })
-}
+    })),
+  }),
+})
+const { ingested, skipped } = await res.json()
 
 // 3. Report sync completion
-await fetch(`${LOCIGRAM_URL}/api/connectors/${INSTANCE_ID}/sync`, {
+await fetch(`${LOCIGRAM_URL}/api/connectors/${INSTANCE_ID}/report`, {
   method: 'POST',
-  headers: { 'Authorization': `Bearer ${TOKEN}` },
+  headers: {
+    'Authorization': `Bearer ${TOKEN}`,
+    'Content-Type': 'application/json',
+  },
   body: JSON.stringify({
-    itemsPulled: items.length,
-    cursorAfter: newCursor,
+    itemsPulled:  items.length,
+    itemsPushed:  ingested,
+    itemsSkipped: skipped,
+    cursorAfter:  newCursor,
   }),
 })
 ```
