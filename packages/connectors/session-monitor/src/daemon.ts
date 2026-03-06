@@ -4,7 +4,7 @@ import path from 'node:path'
 import http from 'node:http'
 import https from 'node:https'
 import { config } from './config'
-import { pushToLocigram } from './ingest'
+import { pushToLocigram, flushSyncReport } from './ingest'
 
 const LOG_PREFIX = '[session-monitor]'
 const SECTION_BREAK_EVERY_N = 15
@@ -714,6 +714,9 @@ function setupShutdownHandlers(sessionTimer: NodeJS.Timeout, projectTimer: NodeJ
         await writeActiveContext(state.lastStructured, state, true)
       } catch (error) { warn(`final snapshot write failed: ${String(error)}`, state.agentName) }
     }
+
+    // Flush final sync report to connector
+    try { await flushSyncReport() } catch { /* best effort */ }
 
     process.exit(0)
   }

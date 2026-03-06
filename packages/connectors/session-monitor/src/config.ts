@@ -33,6 +33,10 @@ export const config = {
 
   // Optional — Discord
   discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL ?? null as string | null,
+
+  // Connector framework (Phase 3)
+  connectorToken:      process.env.LOCIGRAM_CONNECTOR_TOKEN ?? '',
+  connectorInstanceId: process.env.LOCIGRAM_INSTANCE_ID ?? '',
 }
 
 export function validateConfig(): void {
@@ -44,4 +48,6 @@ export function validateConfig(): void {
     console.error('[session-monitor] LOCIGRAM_API_TOKEN is required')
     process.exit(1)
   }
+  if (!config.connectorToken) console.warn('[session-monitor] LOCIGRAM_CONNECTOR_TOKEN not set — ingestion will use legacy /api/sessions/ingest')
+  if (!config.connectorInstanceId) console.warn('[session-monitor] LOCIGRAM_INSTANCE_ID not set — ingestion will use legacy /api/sessions/ingest')
 }
