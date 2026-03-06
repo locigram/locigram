@@ -50,6 +50,26 @@ docker compose up -d
 | `@locigram/pipeline` | Ingestion, extraction, and resolution. |
 | `@locigram/truth` | Truth promotion and decay engine. |
 | `@locigram/connectors` | Plugins for external data sources. |
+| `@locigram/core` | Shared types, interfaces (Connector, RawMemory, Palace). |
+| `@locigram/registry` | Connector plugin registry and loader. |
+| `@locigram/db` | Drizzle ORM schema and migrations. |
+| `@locigram/vector` | Vector store operations (Qdrant). |
+
+---
+
+## 🔌 Connector Framework
+
+Locigram supports three connector types for ingesting external data:
+
+| Type | Pattern | Examples |
+|------|---------|----------|
+| **Scheduled** | Cron-based pull → transform → push | Gmail, Slack, HaloPSA, QBO |
+| **Daemon** | Long-running, event-driven | Session monitor, file watchers |
+| **Webhook** | Passive HTTP endpoint | GitHub events, Stripe |
+
+Connector instances are managed per-palace via REST API (`/api/connectors`) and MCP tools (`connectors_list`, `connectors_create`, `connectors_sync`, `connectors_status`).
+
+See [Connectors documentation](docs/connectors.md) for setup and configuration.
 
 ---
 
