@@ -62,8 +62,12 @@ Watches OpenClaw agent session logs and generates handoff summaries.
 *   `agent/{name}/heartbeat` — Liveness signals
 
 ### secondbrain-sync
-Nightly synthesis of SuruDB business data (clients, tickets, devices).
+Nightly synthesis of SuruDB business data (clients, tickets, devices, people, invoices).
 *   Locus: `connectors/secondbrain-sync`
+*   **Incremental** — uses cursor to only pull records changed since last run. First run is full sync.
+*   No LIMIT on people — syncs all `intel.people` profiles.
+*   Categories: Client Profiles (LLM), Device Summaries (LLM), Ticket Patterns (LLM), Key Contacts (direct), Financial Snapshot (LLM).
+*   Skips categories with no changed data on incremental runs.
 
 ### obsidian-audit & obsidian-sync
 Daily vault evaluation (3am) and hourly summarized sync (:15).
