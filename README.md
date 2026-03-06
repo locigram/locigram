@@ -59,17 +59,20 @@ docker compose up -d
 
 ## 🔌 Connector Framework
 
-Locigram supports three connector types for ingesting external data:
+Connectors are the standardized way external data flows into Locigram.
+
+**Bundled** connectors ship with Locigram and run in-process (Gmail, M365, Webhook).
+**External** connectors run as their own container/process and communicate via authenticated API — build connectors for any data source without modifying Locigram itself.
 
 | Type | Pattern | Examples |
 |------|---------|----------|
-| **Scheduled** | Cron-based pull → transform → push | Gmail, Slack, HaloPSA, QBO |
+| **Scheduled** | Cron-based pull → transform → push | Gmail, Obsidian, Slack |
 | **Daemon** | Long-running, event-driven | Session monitor, file watchers |
 | **Webhook** | Passive HTTP endpoint | GitHub events, Stripe |
 
-Connector instances are managed per-palace via REST API (`/api/connectors`) and MCP tools (`connectors_list`, `connectors_create`, `connectors_sync`, `connectors_status`).
+External connectors authenticate with **scoped connector tokens** — palace-scoped, instance-scoped, least privilege. Managed via REST API (`/api/connectors`) and MCP tools.
 
-See [Connectors documentation](docs/connectors.md) for setup and configuration.
+See [Connectors documentation](docs/connectors.md) for setup, auth, and building your own.
 
 ---
 

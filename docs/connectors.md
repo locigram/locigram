@@ -6,71 +6,119 @@ Connectors are the standardized way external data flows into Locigram. They pull
 
 ---
 
-## Connector Framework
+## Distribution Model
 
-Locigram supports three connector types:
+Locigram supports two connector distribution models:
+
+### Bundled Connectors
+Ship with the Locigram server image. Run in-process, managed by the built-in scheduler. Zero setup beyond providing credentials.
+
+| Connector | Description |
+|-----------|-------------|
+| Gmail | Google email via API |
+| M365 (Email + Teams) | Microsoft email + chat via Graph API |
+| Webhook | Generic inbound push endpoint (always enabled) |
+
+### External Connectors
+Run as their own Docker container or process. Communicate with Locigram via authenticated API. Use when the connector is industry-specific, needs host access, or is a long-running daemon.
+
+| Connector | Description |
+|-----------|-------------|
+| HaloPSA | PSA tickets, assets, contracts |
+| QuickBooks Online | Invoices, payments, vendor bills |
+| NinjaOne | RMM device inventory, alerts |
+| Obsidian | Vault audit + sync (needs filesystem) |
+| Session Monitor | OpenClaw agent sessions (daemon, needs filesystem) |
+| Slack | Channel history + webhook events |
+| GitHub | Issue/PR discussions, webhook events |
+
+---
+
+## Connector Types
 
 | Type | Pattern | Examples |
 |------|---------|----------|
-| **Scheduled** | Cron-based pull → transform → push | Gmail, Slack, HaloPSA, QBO, Obsidian |
-| **Daemon** | Long-running, event-driven, real-time | Session monitor, filesystem watchers |
-| **Webhook** | Passive HTTP endpoint, processes inbound payloads | GitHub webhooks, Stripe events |
+| **Scheduled** | Cron-based pull → transform → push | Gmail, Obsidian, HaloPSA |
+| **Daemon** | Long-running, event-driven, real-time | Session monitor, file watchers |
+| **Webhook** | Passive HTTP endpoint, processes inbound | GitHub events, Stripe |
 
-### Connector Management API
+---
+
+## Authentication
+
+### Bundled Connectors
+Run inside the server process — no separate auth needed. Credentials are provided via env vars.
+
+### External Connectors
+Each connector instance gets a **scoped connector token** at creation time.
+
+```bash
+# Admin creates a connector instance (requires palace API token)
+curl -X POST https://your-locigram/api/connectors \
+  -H "Authorization: Bearer $PALACE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"connectorType": "halopsa", "name": "HaloPSA Tickets"}'
+
+# Response includes the connector token (shown once, store it!)
+# { "id": "...", "token": "lc_abc123..." }
+```
+
+The connector then uses this token for all API calls:
+
+```bash
+# Connector pushes memories
+curl -X POST https://your-locigram/api/ingest \
+  -H "Authorization: Bearer lc_abc123..." \
+  -d '{"content": "...", "sourceType": "ticket", "sourceRef": "T-1234"}'
+
+# Connector reports sync completion
+curl -X POST https://your-locigram/api/connectors/INSTANCE_ID/sync \
+  -H "Authorization: Bearer lc_abc123..."
+```
+
+**Token properties:**
+- Palace-scoped (can only write to its palace)
+- Instance-scoped (can only operate on its own connector)
+- Rotatable and revocable by admin
+- SHA-256 hashed at rest
+
+---
+
+## Connector Management API
 
 Connector instances are managed per-palace via REST API and MCP tools.
 
-**REST Endpoints:**
+### REST Endpoints (admin — palace API token)
 - `GET /api/connectors` — List all connector instances
-- `POST /api/connectors` — Create a new connector instance
-- `GET /api/connectors/:id` — Get instance details + recent syncs
+- `POST /api/connectors` — Create instance (returns connector token)
+- `GET /api/connectors/:id` — Get details + recent syncs
 - `PATCH /api/connectors/:id` — Update config/schedule/status
-- `DELETE /api/connectors/:id` — Delete instance
-- `POST /api/connectors/:id/sync` — Trigger manual sync
-- `GET /api/connectors/:id/syncs` — Sync history
+- `DELETE /api/connectors/:id` — Delete instance + revoke token
+- `POST /api/connectors/:id/token/rotate` — Rotate connector token
 
-**MCP Tools:**
+### REST Endpoints (connector — connector token)
+- `GET /api/connectors/:id` — Read own status/cursor
+- `POST /api/connectors/:id/sync` — Report sync completion
+- `POST /api/ingest` — Push memories (tagged with connector ID)
+
+### MCP Tools
 - `connectors_list` — List connector instances
 - `connectors_create` — Create a new connector instance
 - `connectors_sync` — Trigger manual sync
 - `connectors_status` — Get status + recent syncs
 
-### Database Tables
-
-```sql
-connector_instances  -- Per-palace connector configs, auth, schedule, cursor, status
-connector_syncs      -- Audit log of each sync run with item counts and cursors
-```
-
-### Core Interface
-
-```typescript
-interface Connector {
-  name: string
-  pull(opts?: { since?: Date; limit?: number; cursor?: string }): Promise<PullResult>
-  listen?(handler: (memory: RawMemory) => void): void
-}
-
-interface PullResult {
-  memories: RawMemory[]
-  cursor?: string     // opaque cursor for next incremental pull
-  hasMore?: boolean
-}
-
-interface ConnectorPlugin {
-  name: string
-  version: string
-  configSchema: z.ZodSchema
-  create(config: unknown): Connector
-}
-```
-
 ---
 
-## Available Connectors
+## Bundled Connector Setup
 
-### Microsoft 365 — Email
-Incremental sync using Graph API. Each email is run through LLM extraction.
+### Gmail
+```env
+LOCIGRAM_GMAIL_CLIENT_ID=your-client-id
+LOCIGRAM_GMAIL_CLIENT_SECRET=your-client-secret
+LOCIGRAM_GMAIL_REFRESH_TOKEN=your-refresh-token
+```
+
+### Microsoft 365 — Email + Teams
 ```env
 LOCIGRAM_M365_TENANT_ID=your-tenant-id
 LOCIGRAM_M365_CLIENT_ID=your-client-id
@@ -78,83 +126,59 @@ LOCIGRAM_M365_CLIENT_SECRET=your-client-secret
 LOCIGRAM_M365_MAILBOXES=you@company.com
 ```
 
-### Microsoft 365 — Teams Chat
-Group channel messages by reply thread. Groups are processed once quiet for 2 hours.
-*Uses the same credentials as M365 Email.*
-
-### HaloPSA
-Support tickets, assets, and contracts. Assets/contracts are ingested as reference data.
-```env
-LOCIGRAM_HALOPSA_URL=https://yourinstance.halopsa.com
-LOCIGRAM_HALOPSA_CLIENT_ID=your-client-id
-LOCIGRAM_HALOPSA_CLIENT_SECRET=your-client-secret
-```
-
-### NinjaOne
-Device inventory and alerts. Ingested as reference data (`is_reference = true`).
-```env
-LOCIGRAM_NINJA_CLIENT_ID=your-client-id
-LOCIGRAM_NINJA_CLIENT_SECRET=your-client-secret
-```
-
-### Gmail
-Incremental sync via History ID. Filters spam and newsletters.
-```env
-LOCIGRAM_GMAIL_CLIENT_ID=your-client-id
-LOCIGRAM_GMAIL_CLIENT_SECRET=your-client-secret
-LOCIGRAM_GMAIL_REFRESH_TOKEN=your-refresh-token
-```
-
-### QuickBooks Online
-Invoices, payments, vendor bills. Financial records are **pre-classified** (LLM extraction is skipped to preserve exact figures).
-```env
-LOCIGRAM_QBO_CLIENT_ID=your-client-id
-LOCIGRAM_QBO_CLIENT_SECRET=your-client-secret
-LOCIGRAM_QBO_REALM_ID=your-company-id
-LOCIGRAM_QBO_REFRESH_TOKEN=your-refresh-token
-```
-
----
-
-## Daemon Connectors
-
-### Session Monitor (`@locigram/session-monitor`)
-**Type:** Daemon (event-driven, bidirectional, fleet-aware)
-
-Watches OpenClaw agent session logs in real-time and generates handoff summaries. The most complex connector — combines daemon lifecycle, bidirectional writeback, and multi-agent fleet awareness.
-
-**Capabilities:**
-- Watches `~/.openclaw/agents/{name}/sessions/*.jsonl` for changes
-- Generates LLM-powered handoff summaries every N messages or at file size thresholds
-- Writes back: `active-context.json`, `live-handoff.md`, memory flush files
-- Fleet discovery: scans all agent directories every 30s
-- Session continuity: 15-minute resume window preserves context
-- Heartbeat: per-agent liveness signals to Locigram server
-- Two modes: `daemon` (persistent) and `complete` (one-shot for ephemeral agents)
-
-**Loci produced:**
-- `agent/{name}/session/{id}` — Individual session summaries
-- `agent/{name}/context` — Live structured state (currentTask, pendingActions, blockers)
-
-### Obsidian Audit & Sync
-**Type:** Scheduled (audit: daily 3 AM, sync: hourly :15)
-
-Daily vault evaluation decides what to index. Hourly sync pushes summarized notes to Locigram.
-
-- Locus: `connectors/obsidian-sync`
-- Includes `Source: path/to/note.md` for full content retrieval
-- **Additive only** — connectors never delete or downgrade memories. Locigram sweep owns lifecycle.
-- Audit safeguards: previously indexed notes cannot be downgraded; LLM failures preserve existing verdicts.
-
----
-
-## Webhook Connector (Always Enabled)
-
-Push content directly via REST.
+### Webhook (Always Enabled)
 ```bash
-curl -X POST http://localhost:3000/api/webhook/ingest \
+curl -X POST https://your-locigram/api/webhook/ingest \
   -H "Authorization: Bearer $API_TOKEN" \
-  -d '{ "content": "Manual note content", "sourceType": "manual" }'
+  -d '{"content": "Manual note", "sourceType": "manual"}'
+```
+
+---
+
+## Building an External Connector
+
+External connectors are standalone processes that:
+1. Receive a connector token from the admin
+2. Pull data from their source on a schedule (or react to events)
+3. Push memories to Locigram via the ingest API
+4. Report sync status back to Locigram
+
+Minimal example:
+
+```typescript
+const LOCIGRAM_URL = process.env.LOCIGRAM_URL       // e.g. https://your-locigram
+const TOKEN = process.env.LOCIGRAM_CONNECTOR_TOKEN   // scoped connector token
+const INSTANCE_ID = process.env.LOCIGRAM_INSTANCE_ID // connector instance UUID
+
+// 1. Pull data from your source
+const items = await fetchFromMySource(cursor)
+
+// 2. Push each item to Locigram
+for (const item of items) {
+  await fetch(`${LOCIGRAM_URL}/api/ingest`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      content: item.summary,
+      sourceType: 'my-source',
+      sourceRef: item.id,
+      occurredAt: item.timestamp,
+    }),
+  })
+}
+
+// 3. Report sync completion
+await fetch(`${LOCIGRAM_URL}/api/connectors/${INSTANCE_ID}/sync`, {
+  method: 'POST',
+  headers: { 'Authorization': `Bearer ${TOKEN}` },
+  body: JSON.stringify({
+    itemsPulled: items.length,
+    cursorAfter: newCursor,
+  }),
+})
 ```
 
 ---
@@ -164,6 +188,7 @@ curl -X POST http://localhost:3000/api/webhook/ingest \
 1. **Connectors are additive feeders** — they only add/update, never delete. Locigram sweep owns memory lifecycle.
 2. **Source attribution is mandatory** — every locigram traces back to its origin connector and source ID.
 3. **Temporal context is first-class** — `occurredAt` enables "what did we know when?" queries.
-4. **Multi-tenant isolation** — connector configs, auth, and data are palace-scoped.
-5. **Idempotent syncs** — re-running a sync for the same period produces the same result.
-6. **Graduated decay** — connectors can set importance hints; sweep respects them.
+4. **Multi-tenant isolation** — configs, tokens, and data are palace-scoped.
+5. **Least privilege** — connector tokens can only access their own instance and ingest endpoint.
+6. **Bundled = generic, External = specific** — keep the core image lean.
+7. **Idempotent syncs** — re-running a sync produces the same result.
