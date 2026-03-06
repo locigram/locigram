@@ -52,6 +52,18 @@ async function main() {
       const note = batch.find(n => n.path === result.path)
       if (!note) continue
 
+      const existing = entryMap.get(result.path)
+
+      // SAFEGUARD: never downgrade index → skip/covered
+      // Once approved, only Locigram sweep can deprecate it
+      if (existing?.verdict === 'index' && result.verdict !== 'index') {
+        console.log(`  [KEPT] ${result.path} — was indexed, LLM suggested ${result.verdict}: ${result.reason}`)
+        // Update mtime but preserve verdict
+        entryMap.set(result.path, { ...existing, lastAudited: now, mtime: note.mtime })
+        evaluated++
+        continue
+      }
+
       const entry: IndexEntry = {
         path: result.path,
         verdict: result.verdict,
@@ -72,10 +84,11 @@ async function main() {
     }
   }
 
-  // Also mark notes that no longer exist as skip
+  // Log notes that no longer exist but keep them in index
+  // Locigram sweep handles memory decay — we don't remove from our side
   for (const [path, entry] of entryMap) {
     if (!notes.find(n => n.path === path) && entry.verdict === 'index') {
-      entryMap.set(path, { ...entry, verdict: 'skip', reason: 'Note no longer exists in vault' })
+      console.log(`  [ORPHAN] ${path} — no longer in vault, kept in index (Locigram sweep handles decay)`)
     }
   }
 

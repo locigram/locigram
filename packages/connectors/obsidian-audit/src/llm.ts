@@ -93,12 +93,7 @@ export async function evaluateBatch(
     const parsed = JSON.parse(match[0]) as EvalResult[]
     return parsed
   } catch (err) {
-    console.warn(`[obsidian-audit] LLM batch eval failed: ${err} — defaulting all to skip`)
-    return notes.map(n => ({
-      path: n.path,
-      verdict: 'skip' as const,
-      locus: guessLocus(n.path),
-      reason: 'LLM unavailable — defaulting to skip',
-    }))
+    console.warn(`[obsidian-audit] LLM batch eval failed: ${err} — preserving existing verdicts`)
+    return [] // return empty — caller preserves existing index entries
   }
 }
