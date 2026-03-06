@@ -499,37 +499,13 @@ async function archiveHandoffOnSessionSwitch(state: AgentWatcherState): Promise<
   }
 }
 
-// ── Project detection (optional, requires workspaceRoot) ─────────────────────
+// ── Project detection ────────────────────────────────────────────────────────
+// DISABLED: Auto-creating project stubs from LLM output produced 937 junk files.
+// The LLM extracted code snippets and log lines as "project names".
+// If re-enabled, needs: strict name validation, allowlist matching, human approval.
 
-function sanitizeProjectName(raw: string): string {
-  const firstToken = raw.split(/[\r\n]/)[0] ?? ''
-  const cleaned = firstToken.replace(/[^A-Za-z0-9-]/g, '').replace(/^-+/, '').replace(/-+$/, '')
-  return (cleaned || 'Unknown-Project').slice(0, 60)
-}
-
-async function detectProject(state: AgentWatcherState): Promise<void> {
-  if (!config.workspaceRoot || !config.obsidianVault) return
-  if (!state.currentSessionPath) return
-  // Read recent transcript for project detection
-  const content = await readLastJsonlMessages(state.currentSessionPath, 30)
-  if (!content) { warn('project detection: transcript empty, skipping', state.agentName); return }
-  const prompt = [
-    'Based on this conversation snippet, what project/feature is being worked on?',
-    'Reply with ONLY a project name, 2-4 hyphenated words, no explanation, no punctuation. Example: locigram-session-monitor',
-    `CONVERSATION: ${content}`,
-  ].join('\n')
-  const llmResult = await callLlm(prompt)
-  if (!llmResult) { warn('project detection: LLM unavailable', state.agentName); return }
-  const projectName = sanitizeProjectName(llmResult.narrative)
-  if (!projectName) return
-  // Create project stub if Obsidian vault configured
-  const projectsDir = path.join(config.obsidianVault, 'Projects')
-  const targetPath = path.join(projectsDir, `${projectName}.md`)
-  try { await fsp.access(targetPath, fs.constants.F_OK); return } catch { /* create */ }
-  await fsp.mkdir(projectsDir, { recursive: true })
-  const body = `# ${projectName}\n\n## Current State\n- Newly detected by session-monitor\n`
-  await fsp.writeFile(targetPath, body, 'utf8')
-  log(`project detection: created stub ${targetPath}`, state.agentName)
+async function detectProject(_state: AgentWatcherState): Promise<void> {
+  // no-op — disabled 2026-03-06
 }
 
 // ── Startup reconciliation ───────────────────────────────────────────────────
