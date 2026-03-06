@@ -66,9 +66,11 @@ Nightly synthesis of SuruDB business data (clients, tickets, devices).
 *   Locus: `connectors/secondbrain-sync`
 
 ### obsidian-audit & obsidian-sync
-Weekly vault evaluation and nightly summarized sync.
+Daily vault evaluation (3am) and hourly summarized sync (:15).
 *   Locus: `connectors/obsidian-sync`
 *   Includes `Source: path/to/note.md` for full content retrieval.
+*   **Additive only** — connectors never delete or downgrade memories. Locigram sweep owns lifecycle.
+*   Audit safeguards: previously indexed notes cannot be downgraded; LLM failures preserve existing verdicts.
 
 ### Webhook (Always Enabled)
 Push content directly via REST.
