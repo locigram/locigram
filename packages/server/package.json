@@ -23,6 +23,7 @@
     "@modelcontextprotocol/sdk": "latest",
     "@qdrant/js-client-rest": "latest",
     "bcryptjs": "latest",
+    "cron": "^4.4.0",
     "drizzle-orm": "latest",
     "hono": "latest",
     "neo4j-driver": "^6.0.1",

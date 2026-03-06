@@ -45,11 +45,26 @@
         "@locigram/core": "workspace:*",
       },
     },
+    "packages/connectors/obsidian-audit": {
+      "name": "@locigram/connector-obsidian-audit",
+      "version": "0.1.0",
+    },
+    "packages/connectors/obsidian-sync": {
+      "name": "@locigram/connector-obsidian-sync",
+      "version": "0.1.0",
+    },
     "packages/connectors/qbo": {
       "name": "@locigram/connector-qbo",
       "version": "0.1.0",
       "dependencies": {
         "@locigram/core": "workspace:*",
+      },
+    },
+    "packages/connectors/secondbrain-sync": {
+      "name": "@locigram/connector-secondbrain-sync",
+      "version": "0.1.0",
+      "dependencies": {
+        "postgres": "latest",
       },
     },
     "packages/connectors/session-monitor": {
@@ -144,6 +159,7 @@
         "@modelcontextprotocol/sdk": "latest",
         "@qdrant/js-client-rest": "latest",
         "bcryptjs": "latest",
+        "cron": "^4.4.0",
         "drizzle-orm": "latest",
         "hono": "latest",
         "neo4j-driver": "^6.0.1",
@@ -244,7 +260,13 @@
 
     "@locigram/connector-ninjaone": ["@locigram/connector-ninjaone@workspace:packages/connectors/ninjaone"],
 
+    "@locigram/connector-obsidian-audit": ["@locigram/connector-obsidian-audit@workspace:packages/connectors/obsidian-audit"],
+
+    "@locigram/connector-obsidian-sync": ["@locigram/connector-obsidian-sync@workspace:packages/connectors/obsidian-sync"],
+
     "@locigram/connector-qbo": ["@locigram/connector-qbo@workspace:packages/connectors/qbo"],
+
+    "@locigram/connector-secondbrain-sync": ["@locigram/connector-secondbrain-sync@workspace:packages/connectors/secondbrain-sync"],
 
     "@locigram/connector-sms": ["@locigram/connector-sms@workspace:packages/connectors/sms"],
 
@@ -273,6 +295,8 @@
     "@qdrant/js-client-rest": ["@qdrant/js-client-rest@1.17.0", "", { "dependencies": { "@qdrant/openapi-typescript-fetch": "1.2.6", "undici": "^6.23.0" }, "peerDependencies": { "typescript": ">=4.7" } }, "sha512-aZFQeirWVqWAa1a8vJ957LMzcXkFHGbsoRhzc8AkGfg6V0jtK8PlG8/eyyc2xhYsR961FDDx1Tx6nyE0K7lS+A=="],
 
     "@qdrant/openapi-typescript-fetch": ["@qdrant/openapi-typescript-fetch@1.2.6", "", {}, "sha512-oQG/FejNpItrxRHoyctYvT3rwGZOnK4jr3JdppO/c78ktDvkWiPXPHNsrDf33K9sZdRb6PR7gi4noIapu5q4HA=="],
+
+    "@types/luxon": ["@types/luxon@3.7.1", "", {}, "sha512-H3iskjFIAn5SlJU7OuxUmTEpebK6TKB8rxZShDslBMZJ5u9S//KM1sbdAisiSrqwLQncVjnpi2OK2J51h+4lsg=="],
 
     "accepts": ["accepts@2.0.0", "", { "dependencies": { "mime-types": "^3.0.0", "negotiator": "^1.0.0" } }, "sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng=="],
 
@@ -305,6 +329,8 @@
     "cookie-signature": ["cookie-signature@1.2.2", "", {}, "sha512-D76uU73ulSXrD1UXF4KE2TMxVVwhsnCgfAyTg9k8P6KGZjlXKrOLe4dJQKI3Bxi5wjesZoFXJWElNWBjPZMbhg=="],
 
     "cors": ["cors@2.8.6", "", { "dependencies": { "object-assign": "^4", "vary": "^1" } }, "sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw=="],
+
+    "cron": ["cron@4.4.0", "", { "dependencies": { "@types/luxon": "~3.7.0", "luxon": "~3.7.0" } }, "sha512-fkdfq+b+AHI4cKdhZlppHveI/mgz2qpiYxcm+t5E5TsxX7QrLS1VE0+7GENEk9z0EeGPcpSciGv6ez24duWhwQ=="],
 
     "cross-spawn": ["cross-spawn@7.0.6", "", { "dependencies": { "path-key": "^3.1.0", "shebang-command": "^2.0.0", "which": "^2.0.1" } }, "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA=="],
 
@@ -391,6 +417,8 @@
     "json-schema-traverse": ["json-schema-traverse@1.0.0", "", {}, "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug=="],
 
     "json-schema-typed": ["json-schema-typed@8.0.2", "", {}, "sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA=="],
+
+    "luxon": ["luxon@3.7.2", "", {}, "sha512-vtEhXh/gNjI9Yg1u4jX/0YVPMvxzHuGgCm6tC5kZyb08yjGWGnqAjGJvcXbqQR2P3MyMEFnRbpcdFS6PBcLqew=="],
 
     "math-intrinsics": ["math-intrinsics@1.1.0", "", {}, "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g=="],
 
