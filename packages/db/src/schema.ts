@@ -261,6 +261,54 @@ export const oauthAccessTokens = pgTable(
   ],
 )
 
+// ── connector_instances ──────────────────────────────────────────────────────
+
+export const connectorInstances = pgTable(
+  'connector_instances',
+  {
+    id:             id(),
+    palaceId:       text('palace_id').notNull().references(() => palaces.id, { onDelete: 'cascade' }),
+    connectorType:  text('connector_type').notNull(),
+    name:           text('name').notNull(),
+    config:         jsonb('config').notNull().default(sql`'{}'`),
+    schedule:       text('schedule'),
+    cursor:         jsonb('cursor'),
+    status:         text('status').notNull().default('active'),
+    lastSyncAt:     tstz('last_sync_at'),
+    lastError:      text('last_error'),
+    itemsSynced:    integer('items_synced').notNull().default(0),
+    createdAt:      now(),
+    updatedAt:      tstz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    index('connector_instances_palace_idx').on(t.palaceId),
+    index('connector_instances_type_idx').on(t.palaceId, t.connectorType),
+  ],
+)
+
+// ── connector_syncs ─────────────────────────────────────────────────────────
+
+export const connectorSyncs = pgTable(
+  'connector_syncs',
+  {
+    id:           id(),
+    instanceId:   uuid('instance_id').notNull().references(() => connectorInstances.id, { onDelete: 'cascade' }),
+    startedAt:    tstz('started_at').notNull().defaultNow(),
+    completedAt:  tstz('completed_at'),
+    itemsPulled:  integer('items_pulled').notNull().default(0),
+    itemsPushed:  integer('items_pushed').notNull().default(0),
+    itemsSkipped: integer('items_skipped').notNull().default(0),
+    status:       text('status').notNull().default('running'),
+    error:        text('error'),
+    cursorBefore: jsonb('cursor_before'),
+    cursorAfter:  jsonb('cursor_after'),
+    durationMs:   integer('duration_ms'),
+  },
+  (t) => [
+    index('connector_syncs_instance_idx').on(t.instanceId, t.startedAt),
+  ],
+)
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type Palace    = typeof palaces.$inferSelect
@@ -284,6 +332,10 @@ export type NewOAuthClient     = typeof oauthClients.$inferInsert
 export type NewOAuthCode       = typeof oauthCodes.$inferInsert
 export type OAuthAccessToken   = typeof oauthAccessTokens.$inferSelect
 export type NewOAuthAccessToken = typeof oauthAccessTokens.$inferInsert
+export type ConnectorInstance    = typeof connectorInstances.$inferSelect
+export type NewConnectorInstance = typeof connectorInstances.$inferInsert
+export type ConnectorSync        = typeof connectorSyncs.$inferSelect
+export type NewConnectorSync     = typeof connectorSyncs.$inferInsert
 
 // ── Reference type constants ──────────────────────────────────────────────────
 

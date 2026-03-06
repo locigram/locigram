@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { locigrams, truths, entities } from '@locigram/db'
+import { locigrams, truths, entities, connectorInstances, connectorSyncs } from '@locigram/db'
 import { eq, and, gte, desc, sql, isNull, inArray, or, like } from 'drizzle-orm'
 import type { DB } from '@locigram/db'
 import type { Palace } from '@locigram/db'
@@ -459,6 +459,94 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           .where(eq(locigrams.id, corrected.id))
 
         return { newId: corrected.id, supersededId: oldId, status: 'corrected' }
+      },
+    },
+
+    // ── Connector instance management ──────────────────────────────────────────
+
+    connectors_list: {
+      description: 'List all connector instances configured for this palace.',
+      schema: z.object({}),
+      handler: async () => {
+        const rows = await db.select().from(connectorInstances)
+          .where(eq(connectorInstances.palaceId, palaceId))
+          .orderBy(desc(connectorInstances.createdAt))
+        return { connectors: rows, total: rows.length }
+      },
+    },
+
+    connectors_create: {
+      description: 'Create a new connector instance for this palace.',
+      schema: z.object({
+        connectorType: z.string().describe('Connector type e.g. gmail, obsidian, slack'),
+        name:          z.string().describe('Display name for this connector instance'),
+        config:        z.record(z.string(), z.unknown()).default({}).describe('Connector-specific configuration'),
+        schedule:      z.string().optional().describe('Cron expression for automatic sync (null = manual only)'),
+      }),
+      handler: async ({ connectorType, name: instanceName, config: instanceConfig, schedule }: any) => {
+        const [instance] = await db.insert(connectorInstances).values({
+          palaceId,
+          connectorType,
+          name: instanceName,
+          config: instanceConfig,
+          schedule: schedule ?? null,
+        }).returning()
+        return instance
+      },
+    },
+
+    connectors_sync: {
+      description: 'Trigger a manual sync for a connector instance.',
+      schema: z.object({
+        id: z.string().uuid().describe('Connector instance ID'),
+      }),
+      handler: async ({ id: instanceId }: { id: string }) => {
+        const [instance] = await db.select().from(connectorInstances)
+          .where(and(eq(connectorInstances.id, instanceId), eq(connectorInstances.palaceId, palaceId)))
+          .limit(1)
+
+        if (!instance) return { error: 'not found' }
+        if (instance.status === 'disabled') return { error: 'connector is disabled' }
+
+        const [sync] = await db.insert(connectorSyncs).values({
+          instanceId,
+          cursorBefore: instance.cursor,
+        }).returning()
+
+        const startTime = Date.now()
+
+        // TODO: Phase 2 — actually invoke the connector's pull() here
+        const [completedSync] = await db.update(connectorSyncs)
+          .set({ status: 'completed', completedAt: new Date(), durationMs: Date.now() - startTime })
+          .where(eq(connectorSyncs.id, sync.id))
+          .returning()
+
+        await db.update(connectorInstances)
+          .set({ lastSyncAt: new Date(), updatedAt: new Date() })
+          .where(eq(connectorInstances.id, instanceId))
+
+        return completedSync
+      },
+    },
+
+    connectors_status: {
+      description: 'Get status and recent sync history for a connector instance.',
+      schema: z.object({
+        id: z.string().uuid().describe('Connector instance ID'),
+      }),
+      handler: async ({ id: instanceId }: { id: string }) => {
+        const [instance] = await db.select().from(connectorInstances)
+          .where(and(eq(connectorInstances.id, instanceId), eq(connectorInstances.palaceId, palaceId)))
+          .limit(1)
+
+        if (!instance) return { error: 'not found' }
+
+        const recentSyncs = await db.select().from(connectorSyncs)
+          .where(eq(connectorSyncs.instanceId, instanceId))
+          .orderBy(desc(connectorSyncs.startedAt))
+          .limit(5)
+
+        return { ...instance, recentSyncs }
       },
     },
   }

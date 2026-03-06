@@ -27,6 +27,7 @@ import { authorizeRoute } from './oauth/authorize'
 import { tokenRoute } from './oauth/token'
 import { registerRoute } from './oauth/register'
 import { activeContextRoute, fleetRoute, heartbeatRoute } from './routes/context'
+import { connectorsRoute } from './routes/connectors'
 
 export interface AppConfig {
   databaseUrl: string
@@ -140,6 +141,7 @@ export function createApp(config: AppConfig) {
   app.route('/api/feedback',  feedbackRoute)
   app.route('/api/webhook',   buildWebhookRoute())
   app.route('/api/bootstrap', bootstrapRoute)
+  app.route('/api/connectors', connectorsRoute)
   app.route('/api/context/active', activeContextRoute)
   app.route('/api/context/fleet',  fleetRoute)
   app.route('/api/agents',         heartbeatRoute)

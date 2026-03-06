@@ -108,9 +108,15 @@ export interface RawMemory {
   }
 }
 
+export interface PullResult {
+  memories: RawMemory[]
+  cursor?: string   // opaque cursor for next incremental pull
+  hasMore?: boolean
+}
+
 export interface Connector {
   name: string
-  pull(opts?: { since?: Date; limit?: number }): Promise<RawMemory[]>
+  pull(opts?: { since?: Date; limit?: number; cursor?: string }): Promise<RawMemory[] | PullResult>
   listen?(handler: (memory: RawMemory) => void): void
 }
 
