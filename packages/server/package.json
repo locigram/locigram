@@ -10,9 +10,7 @@
   "dependencies": {
     "@hono/zod-validator": "latest",
     "@locigram/connector-gmail": "workspace:*",
-    "@locigram/connector-halopsa": "workspace:*",
     "@locigram/connector-microsoft365": "workspace:*",
-    "@locigram/connector-ninjaone": "workspace:*",
     "@locigram/connector-webhook": "workspace:*",
     "@locigram/core": "workspace:*",
     "@locigram/db": "workspace:*",

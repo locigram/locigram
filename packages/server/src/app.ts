@@ -28,6 +28,7 @@ import { tokenRoute } from './oauth/token'
 import { registerRoute } from './oauth/register'
 import { activeContextRoute, fleetRoute, heartbeatRoute } from './routes/context'
 import { connectorsRoute } from './routes/connectors'
+import { startScheduler } from './scheduler'
 
 export interface AppConfig {
   databaseUrl: string
@@ -89,6 +90,9 @@ export function createApp(config: AppConfig) {
     palaceId:   config.palaceId,
     intervalMs: 6 * 60 * 60 * 1000,
   })
+
+  // Start connector scheduler
+  const scheduler = startScheduler({ db, palaceId: config.palaceId, pipelineConfig })
 
   // Schedule nightly sweep (in-process fallback — K8s CronJob preferred)
   // Only run in-process if LOCIGRAM_DISABLE_INPROCESS_SWEEP is not set
@@ -296,7 +300,7 @@ export function createApp(config: AppConfig) {
   // Cleanup on shutdown
   const originalFetch = app.fetch.bind(app)
   return Object.assign(app, {
-    stop: () => { stopWorker(); stopGraphWorker(); stopTruth(); stopSweep?.() },
+    stop: () => { stopWorker(); stopGraphWorker(); stopTruth(); stopSweep?.(); scheduler.stop() },
     fetch: originalFetch,
   })
 }

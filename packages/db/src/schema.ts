@@ -274,6 +274,7 @@ export const connectorInstances = pgTable(
     schedule:       text('schedule'),
     cursor:         jsonb('cursor'),
     status:         text('status').notNull().default('active'),
+    tokenHash:      text('token_hash'),
     lastSyncAt:     tstz('last_sync_at'),
     lastError:      text('last_error'),
     itemsSynced:    integer('items_synced').notNull().default(0),

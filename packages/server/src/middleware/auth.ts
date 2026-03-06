@@ -1,7 +1,7 @@
 import { createMiddleware } from 'hono/factory'
 import { HTTPException } from 'hono/http-exception'
-import { oauthAccessTokens, oauthClients } from '@locigram/db'
-import { eq, and, isNull, gt } from 'drizzle-orm'
+import { oauthAccessTokens, oauthClients, connectorInstances } from '@locigram/db'
+import { eq, and, isNull, gt, ne } from 'drizzle-orm'
 import crypto from 'node:crypto'
 import type { DB } from '@locigram/db'
 
@@ -25,14 +25,16 @@ export const authMiddleware = createMiddleware(async (c, next) => {
   if (palace?.apiToken && token === palace.apiToken) {
     c.set('oauthService', null)
     c.set('oauthClientId', null)
+    c.set('isConnectorToken', false)
+    c.set('connectorInstanceId', null)
     await next()
     return
   }
 
-  // 2. Check per-client OAuth access token
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex')
   const now = new Date()
 
+  // 2. Check per-client OAuth access token
   const [accessToken] = await db
     .select({
       id:        oauthAccessTokens.id,
@@ -50,30 +52,61 @@ export const authMiddleware = createMiddleware(async (c, next) => {
     )
     .limit(1)
 
-  if (!accessToken) {
-    throw new HTTPException(403, { message: 'Invalid or expired token' })
+  if (accessToken) {
+    // Verify token belongs to this palace
+    if (accessToken.palaceId !== palace.id) {
+      throw new HTTPException(403, { message: 'Token not valid for this palace' })
+    }
+
+    // Load client to get service
+    const [client] = await db
+      .select({ service: oauthClients.service, name: oauthClients.name })
+      .from(oauthClients)
+      .where(eq(oauthClients.id, accessToken.clientId))
+      .limit(1)
+
+    // Update last_used_at (fire and forget)
+    db.update(oauthAccessTokens)
+      .set({ lastUsedAt: now })
+      .where(eq(oauthAccessTokens.id, accessToken.id))
+      .catch(() => {})
+
+    c.set('oauthService', client?.service ?? null)
+    c.set('oauthClientId', accessToken.clientId)
+    c.set('isConnectorToken', false)
+    c.set('connectorInstanceId', null)
+
+    await next()
+    return
   }
 
-  // Verify token belongs to this palace
-  if (accessToken.palaceId !== palace.id) {
-    throw new HTTPException(403, { message: 'Token not valid for this palace' })
+  // 3. Check connector instance token
+  if (token.startsWith('lc_')) {
+    const [instance] = await db
+      .select({ id: connectorInstances.id, palaceId: connectorInstances.palaceId })
+      .from(connectorInstances)
+      .where(
+        and(
+          eq(connectorInstances.tokenHash, tokenHash),
+          ne(connectorInstances.status, 'disabled'),
+        )
+      )
+      .limit(1)
+
+    if (instance) {
+      if (instance.palaceId !== palace.id) {
+        throw new HTTPException(403, { message: 'Token not valid for this palace' })
+      }
+
+      c.set('oauthService', null)
+      c.set('oauthClientId', null)
+      c.set('isConnectorToken', true)
+      c.set('connectorInstanceId', instance.id)
+
+      await next()
+      return
+    }
   }
 
-  // Load client to get service
-  const [client] = await db
-    .select({ service: oauthClients.service, name: oauthClients.name })
-    .from(oauthClients)
-    .where(eq(oauthClients.id, accessToken.clientId))
-    .limit(1)
-
-  // Update last_used_at (fire and forget)
-  db.update(oauthAccessTokens)
-    .set({ lastUsedAt: now })
-    .where(eq(oauthAccessTokens.id, accessToken.id))
-    .catch(() => {})
-
-  c.set('oauthService', client?.service ?? null)
-  c.set('oauthClientId', accessToken.clientId)
-
-  await next()
+  throw new HTTPException(403, { message: 'Invalid or expired token' })
 })
