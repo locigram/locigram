@@ -24,7 +24,9 @@ export async function promoteToTruth(
       and(
         eq(truths.palaceId, palaceId),
         eq(truths.locus, group.locus),
-        sql`${truths.entities} = ${group.entities}::text[]`,
+        group.entities.length === 0
+          ? sql`${truths.entities} = '{}'::text[]`
+          : sql`${truths.entities} = ARRAY[${sql.join(group.entities.map(e => sql`${e}`), sql`, `)}]::text[]`,
       )
     )
     .limit(1)
