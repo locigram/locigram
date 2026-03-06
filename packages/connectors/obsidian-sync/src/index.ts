@@ -3,7 +3,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { readNote } from './vault'
 import { summarizeNote } from './llm'
-import { upsertMemory } from './locigram'
+import { upsertMemory, reportSync } from './locigram'
 import { loadCursor, saveCursor } from './cursor'
 
 const VAULT = process.env.OBSIDIAN_VAULT ?? '/Users/surubot/sudobrain'
@@ -27,6 +27,7 @@ function buildDeepLink(relPath: string): string {
 }
 
 async function main() {
+  const startTime = Date.now()
   console.log('[obsidian-sync] Starting')
 
   if (!existsSync(INDEX_PATH)) {
@@ -60,7 +61,7 @@ async function main() {
       const memoryContent = `${summary}\n\nSource: ${entry.path}\nObsidian: ${deepLink}`
       const sourceRef = `obsidian:${entry.path}`
 
-      // Upsert to Locigram
+      // Upsert to Locigram via connector ingest endpoint
       await upsertMemory(memoryContent, sourceRef)
 
       // Update cursor
@@ -78,7 +79,24 @@ async function main() {
   }
 
   saveCursor(cursor)
-  console.log(`[obsidian-sync] Done. Synced: ${synced} | Skipped (unchanged): ${skipped} | Failed: ${failed}`)
+
+  const durationMs = Date.now() - startTime
+
+  // Report sync results to Locigram
+  try {
+    await reportSync({
+      itemsPulled:  approved.length,
+      itemsPushed:  synced,
+      itemsSkipped: skipped,
+      durationMs,
+      ...(failed > 0 ? { error: `${failed} notes failed` } : {}),
+    })
+    console.log(`[obsidian-sync] Reported to Locigram`)
+  } catch (err) {
+    console.warn(`[obsidian-sync] Failed to report: ${err}`)
+  }
+
+  console.log(`[obsidian-sync] Done in ${(durationMs / 1000).toFixed(1)}s. Synced: ${synced} | Skipped (unchanged): ${skipped} | Failed: ${failed}`)
 }
 
 main().catch(err => {
