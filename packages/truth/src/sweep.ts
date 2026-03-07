@@ -4,10 +4,12 @@ import * as schema from '@locigram/db'
 import { sql } from 'drizzle-orm'
 import type { DB } from '@locigram/db'
 
-const DECAY_FACTOR    = parseFloat(process.env.LOCIGRAM_DECAY_FACTOR          ?? '0.6')
-const HOT_THRESHOLD   = parseFloat(process.env.LOCIGRAM_DECAY_HOT_THRESHOLD   ?? '0.3')
-const WARM_THRESHOLD  = parseFloat(process.env.LOCIGRAM_DECAY_WARM_THRESHOLD  ?? '0.1')
-const NOISE_THRESHOLD = parseFloat(process.env.LOCIGRAM_DECAY_NOISE_THRESHOLD ?? '0.05')
+const DECAY_FACTOR            = parseFloat(process.env.LOCIGRAM_DECAY_FACTOR              ?? '0.6')
+const HOT_THRESHOLD           = parseFloat(process.env.LOCIGRAM_DECAY_HOT_THRESHOLD       ?? '0.3')
+const WARM_THRESHOLD          = parseFloat(process.env.LOCIGRAM_DECAY_WARM_THRESHOLD      ?? '0.1')
+const NOISE_THRESHOLD         = parseFloat(process.env.LOCIGRAM_DECAY_NOISE_THRESHOLD     ?? '0.05')
+const REINFORCEMENT_FACTOR    = parseFloat(process.env.LOCIGRAM_REINFORCEMENT_FACTOR      ?? '0.5')
+const MAX_HALFLIFE_MULTIPLIER = parseFloat(process.env.LOCIGRAM_MAX_HALFLIFE_MULTIPLIER   ?? '3')
 
 export async function runSweep(db: DB, palaceId: string): Promise<void> {
   console.log(`[sweep][${palaceId}] starting decay sweep`)
@@ -29,7 +31,10 @@ export async function runSweep(db: DB, palaceId: string): Promise<void> {
             EXTRACT(EPOCH FROM (
               NOW() - COALESCE(last_accessed_at, created_at)
             )) / 86400.0 + 1,
-            ${DECAY_FACTOR}
+            ${DECAY_FACTOR} / LEAST(
+              1 + ${REINFORCEMENT_FACTOR} * LOG(2, 1 + access_count),
+              ${MAX_HALFLIFE_MULTIPLIER}
+            )
           ) AS new_score
       FROM locigrams
       WHERE palace_id  = ${palaceId}

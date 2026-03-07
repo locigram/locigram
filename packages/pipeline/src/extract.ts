@@ -3,6 +3,7 @@ import type { RawMemory } from '@locigram/core'
 import type { PipelineConfig, LLMRole } from './config'
 import { REFERENCE_TYPES } from '@locigram/db'
 import { extractEntitiesWithGLiNER } from './gliner'
+import { isNoise } from './noise-filter'
 
 // ── Regex patterns for reference data detection ───────────────────────────────
 
@@ -108,6 +109,11 @@ export async function extractFromRaw(
   config: PipelineConfig,
 ): Promise<ExtractionResult> {
   const role = config.llm.extract
+
+  if (isNoise(raw.content)) {
+    console.log('[extract] skipping noise:', raw.content.slice(0, 50))
+    return fallback(raw)
+  }
 
   // Signal 1: connector default (NinjaOne devices, HaloPSA assets/contracts = reference by default)
   const connectorIsReference = REFERENCE_CONNECTORS.has(raw.metadata?.connector as string ?? '')

@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { locigrams, retrievalEvents } from '@locigram/db'
 import { eq, and, inArray, sql } from 'drizzle-orm'
+import { applyLengthNormalization, applyTimeDecay, applyMMRDiversity } from '../scoring'
 
 const schema = z.object({
   query:      z.string().min(1),
@@ -51,6 +52,17 @@ recallRoute.post('/', zValidator('json', schema), async (c) => {
     .sort((a, b) => (scoreMap.get(b.id) ?? 0) - (scoreMap.get(a.id) ?? 0))
     .map(r => ({ ...r, _score: scoreMap.get(r.id) ?? 0 }))
 
+  // Post-Qdrant scoring pipeline
+  let scored = results as Array<typeof results[number]>
+  scored = applyLengthNormalization(scored, parseInt(process.env.LOCIGRAM_LENGTH_NORM_ANCHOR ?? '500'))
+  scored = applyTimeDecay(scored, parseInt(process.env.LOCIGRAM_QUERY_TIME_DECAY_HALFLIFE ?? '60'))
+  scored = applyMMRDiversity(scored, parseFloat(process.env.LOCIGRAM_MMR_THRESHOLD ?? '0.85'))
+
+  // Re-sort by adjusted score and apply hard minimum
+  scored = scored
+    .filter(r => r._score >= (parseFloat(process.env.LOCIGRAM_HARD_MIN_SCORE ?? '0') || 0))
+    .sort((a, b) => b._score - a._score)
+
   // Fire-and-forget — don't block the response
   if (ids.length > 0) {
     db.update(locigrams)
@@ -70,5 +82,5 @@ recallRoute.post('/', zValidator('json', schema), async (c) => {
       .catch(err => console.warn('[recall] retrieval_events insert failed:', err))
   }
 
-  return c.json({ results, query, total: results.length })
+  return c.json({ results: scored, query, total: scored.length })
 })
