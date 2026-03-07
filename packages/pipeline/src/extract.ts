@@ -38,6 +38,7 @@ const ExtractionSchema = z.object({
   locigrams: z.array(z.object({
     content:    z.string(),
     confidence: z.number().min(0).max(1),
+    category:   z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation']).default('observation'),
   })),
 })
 
@@ -56,7 +57,7 @@ Schema:
   "locus": string,
   "is_reference": boolean,
   "reference_type": "network_device"|"software"|"configuration"|"service_account"|"contract"|"contact"|null,
-  "locigrams": [{ "content": string, "confidence": number }]
+  "locigrams": [{ "content": string, "confidence": number, "category": "decision"|"preference"|"fact"|"lesson"|"entity"|"observation" }]
 }
 
 Rules:
@@ -72,6 +73,13 @@ Rules:
     service_account = usernames, roles, permissions (NOT passwords or secrets)
     contract = SLA terms, renewal dates, pricing, agreement terms
     contact = person phone/email/role/org details
+- category: classify each locigram:
+    decision = explicit choices made ("we decided", "approved", "going with", "chosen")
+    preference = stated likes/dislikes/defaults ("I prefer", "always use", "from now on", "don't ever")
+    fact = verifiable statements (costs, IPs, dates, specs, identities)
+    lesson = learned from experience ("we learned", "next time", "mistake was", "note to self")
+    entity = pure entity knowledge (who someone is, what an org does, product descriptions)
+    observation = default — events, conversations, general notes, anything that doesn't fit above
 - If pre-extracted entities are provided below, use them as your starting point. Add aliases or additional entities you find, but do NOT remove or rename provided entities.`
 
 function buildUserMessage(content: string, preEntities: Array<{name: string; type: string}> | null, noThink: boolean): string {
@@ -94,7 +102,7 @@ function fallback(raw: RawMemory, isReference = false): ExtractionResult {
     reference_type: null,
     isReference,
     referenceType: null,
-    locigrams:     [{ content: raw.content, confidence: 0.5 }],
+    locigrams:     [{ content: raw.content, confidence: 0.5, category: 'observation' as const }],
   }
 }
 

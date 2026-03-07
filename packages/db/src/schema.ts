@@ -53,6 +53,7 @@ export const locigrams = pgTable(
     locus:       text('locus').notNull(),         // namespace: people/x, business/x, technical/x, project/x
     clientId:    text('client_id'),               // MSP client (first-class filter)
     importance:  text('importance').notNull().default('normal'), // low | normal | high
+    category:    text('category').notNull().default('observation'), // decision | preference | fact | lesson | entity | observation
 
     // Storage tier
     // hot  = recent + high confidence + is_reference → active in Qdrant
@@ -98,6 +99,7 @@ export const locigrams = pgTable(
     index('locigrams_connector_idx').on(t.palaceId, t.connector),
     index('locigrams_client_id_idx').on(t.palaceId, t.clientId),
     index('locigrams_tier_idx').on(t.palaceId, t.tier),
+    index('locigrams_category_idx').on(t.palaceId, t.category),
     index('locigrams_graph_synced_idx').on(t.palaceId, t.graphSyncedAt),
     index('locigrams_is_reference_idx').on(t.palaceId, t.isReference),
     index('locigrams_reference_type_idx').on(t.palaceId, t.referenceType),

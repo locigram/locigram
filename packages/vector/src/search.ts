@@ -5,6 +5,7 @@ export interface SearchOptions {
   locus?:      string   // filter by locus prefix
   connector?:  string   // filter by connector name
   sourceType?: string   // filter by source type (email, system, chat, etc.)
+  category?:   string   // filter by locigram category
   limit?:      number
   minScore?:   number
 }
@@ -28,6 +29,7 @@ export async function searchSimilar(
   if (opts.locus)      must.push({ key: 'locus',       match: { text: opts.locus } })
   if (opts.connector)  must.push({ key: 'connector',   match: { value: opts.connector } })
   if (opts.sourceType) must.push({ key: 'source_type', match: { value: opts.sourceType } })
+  if (opts.category)   must.push({ key: 'category',    match: { value: opts.category } })
 
   const results = await client.search(collectionName, {
     vector:          queryVector,

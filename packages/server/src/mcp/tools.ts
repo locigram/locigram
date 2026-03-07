@@ -25,13 +25,14 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
     memory_recall: {
       description: 'Semantically search memories in the palace. Returns the most relevant locigrams for a given query.',
       schema: z.object({
-        query:  z.string().describe('What to search for'),
-        locus:  z.string().optional().describe('Namespace filter e.g. people/, business/, project/locigram'),
-        limit:  z.number().int().min(1).max(20).default(10).describe('Max results'),
+        query:    z.string().describe('What to search for'),
+        locus:    z.string().optional().describe('Namespace filter e.g. people/, business/, project/locigram'),
+        category: z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation']).optional().describe('Filter by memory category'),
+        limit:    z.number().int().min(1).max(20).default(10).describe('Max results'),
       }),
-      handler: async ({ query, locus, limit }: { query: string; locus?: string; limit: number }) => {
+      handler: async ({ query, locus, category, limit }: { query: string; locus?: string; category?: string; limit: number }) => {
         const queryVector = await vector.embed(query)
-        const results = await vector.search(collection, queryVector, { palaceId, locus, limit })
+        const results = await vector.search(collection, queryVector, { palaceId, locus, category, limit })
 
         if (results.length === 0) return { results: [], query }
 
@@ -92,6 +93,7 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
               connector: connectorName ?? 'mcp',
               entities: ents,
               confidence: 1.0,
+              category: 'observation',
               created_at: updated.createdAt.toISOString(),
             })
             return { id: updated.id, status: 'updated' }
@@ -114,6 +116,7 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           connector: connectorName ?? 'mcp',
           entities: ents,
           confidence: 1.0,
+          category: 'observation',
           created_at: loc.createdAt.toISOString(),
         })
 
@@ -451,6 +454,7 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           connector: 'mcp',
           entities: [],
           confidence: 1.0,
+          category: 'observation',
           created_at: corrected.createdAt.toISOString(),
         })
 

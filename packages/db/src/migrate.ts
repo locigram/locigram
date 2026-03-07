@@ -211,6 +211,10 @@ await sql`ALTER TABLE connector_instances ADD COLUMN IF NOT EXISTS distribution 
 await sql`ALTER TABLE locigrams ADD COLUMN IF NOT EXISTS connector_instance_id UUID REFERENCES connector_instances(id) ON DELETE SET NULL`
 await sql`CREATE INDEX IF NOT EXISTS locigrams_connector_instance_idx ON locigrams(connector_instance_id) WHERE connector_instance_id IS NOT NULL`
 
+// ── Structured reflection categories (2026-03-06) ────────────────────────────
+await sql`ALTER TABLE locigrams ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'observation'`
+await sql`CREATE INDEX IF NOT EXISTS locigrams_category_idx ON locigrams (palace_id, category)`
+
 // ── Indexes ───────────────────────────────────────────────────────────────────
 // All use IF NOT EXISTS — safe to re-run.
 

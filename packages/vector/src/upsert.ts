@@ -7,6 +7,7 @@ export interface EmbeddingPayload {
   connector:   string   // which plugin produced this
   entities:    string[]
   confidence:  number
+  category:    string   // decision | preference | fact | lesson | entity | observation
   created_at:  string   // ISO string
 }
 

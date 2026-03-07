@@ -10,6 +10,7 @@ const schema = z.object({
   locus:      z.string().optional(),        // filter to a locus prefix (e.g. "business/")
   connector:  z.string().optional(),        // filter to a specific connector (e.g. "halopsa")
   sourceType: z.string().optional(),        // filter to a source type (e.g. "email")
+  category:   z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation']).optional(),
   limit:      z.number().int().min(1).max(50).default(10),
   minScore:   z.number().min(0).max(1).default(0.5),
 })
@@ -20,7 +21,7 @@ recallRoute.post('/', zValidator('json', schema), async (c) => {
   const db           = c.get('db')
   const palace       = c.get('palace')
   const vectorClient = c.get('vectorClient')
-  const { query, locus, connector, sourceType, limit, minScore } = c.req.valid('json')
+  const { query, locus, connector, sourceType, category, limit, minScore } = c.req.valid('json')
 
   const collectionName = `locigrams-${palace.id}`
 
@@ -33,6 +34,7 @@ recallRoute.post('/', zValidator('json', schema), async (c) => {
     locus,
     connector,
     sourceType,
+    category,
     limit,
     minScore,
   })
@@ -57,6 +59,11 @@ recallRoute.post('/', zValidator('json', schema), async (c) => {
   scored = applyLengthNormalization(scored, parseInt(process.env.LOCIGRAM_LENGTH_NORM_ANCHOR ?? '500'))
   scored = applyTimeDecay(scored, parseInt(process.env.LOCIGRAM_QUERY_TIME_DECAY_HALFLIFE ?? '60'))
   scored = applyMMRDiversity(scored, parseFloat(process.env.LOCIGRAM_MMR_THRESHOLD ?? '0.85'))
+
+  // Category filter (post-fetch — Qdrant pre-filters too, but this catches any gaps)
+  if (category) {
+    scored = scored.filter(r => (r as any).category === category)
+  }
 
   // Re-sort by adjusted score and apply hard minimum
   scored = scored
