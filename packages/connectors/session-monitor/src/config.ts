@@ -18,7 +18,7 @@ export const config = {
   agentsDir:        process.env.OPENCLAW_AGENTS_DIR ?? expandHome('~/.openclaw/agents'),
 
   // Tuning
-  summaryEveryN:    Number(process.env.LOCIGRAM_SUMMARY_EVERY_N ?? '5'),
+  summaryEveryN:    Number(process.env.LOCIGRAM_SUMMARY_EVERY_N ?? '15'),
   compactionMb:     Number(process.env.LOCIGRAM_COMPACTION_MB ?? '8'),
   watchIntervalMs:  2000,
   sessionScanMs:    30_000,
@@ -33,6 +33,9 @@ export const config = {
 
   // Optional — Discord
   discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL ?? null as string | null,
+  discordBotToken:   process.env.DISCORD_BOT_TOKEN || '',
+  discordChannelId:  process.env.DISCORD_CHANNEL_ID || '',
+  discordBotUserId:  process.env.DISCORD_BOT_USER_ID || '',
 
   // Connector framework (Phase 3)
   connectorToken:      process.env.LOCIGRAM_CONNECTOR_TOKEN ?? '',

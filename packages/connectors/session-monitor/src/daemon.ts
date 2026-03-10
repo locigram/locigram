@@ -4,6 +4,7 @@ import path from 'node:path'
 import http from 'node:http'
 import https from 'node:https'
 import { config } from './config'
+import { readDiscordHistory } from './discord'
 import { pushToLocigram, flushSyncReport } from './ingest'
 
 const LOG_PREFIX = '[session-monitor]'
@@ -295,6 +296,42 @@ async function readLastJsonlMessages(jsonlPath: string, maxMessages = 150): Prom
   } catch { return '' }
 }
 
+async function readSessionStartIso(jsonlPath: string): Promise<string | null> {
+  try {
+    const content = await fsp.readFile(jsonlPath, 'utf8')
+    const firstLine = content.split('\n').find((line) => line.trim())
+    if (!firstLine) return null
+    const obj = JSON.parse(firstLine)
+    return parseTimestamp(obj?.timestamp ?? obj?.message?.created_at).toISOString()
+  } catch {
+    return null
+  }
+}
+
+function summarizeMatches(title: string, values: string[], maxItems: number): string | null {
+  if (values.length === 0) return null
+  const unique = [...new Set(values)]
+  return `${title}: ${unique.slice(0, maxItems).join(', ')}`
+}
+
+async function extractStructuredFacts(jsonlPath: string): Promise<string> {
+  try {
+    const content = await fsp.readFile(jsonlPath, 'utf8')
+    const filePaths = content.match(/(?:\/Users\/[^\s"'`<>]+|\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+)/g) ?? []
+    const ipAddresses = content.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g) ?? []
+    const resultTokens = content.match(/\b(?:success(?:ful(?:ly)?)?|succeeded|completed|failed|error|timeout|timed out)\b/gi) ?? []
+    const bullets = [
+      summarizeMatches('Files', filePaths, 4),
+      summarizeMatches('IPs', ipAddresses, 4),
+      summarizeMatches('Results', resultTokens.map((item) => item.toLowerCase()), 6),
+    ].filter((item): item is string => Boolean(item))
+    const summary = bullets.map((item) => `- ${item}`).join('\n')
+    return summary.length > 500 ? `${summary.slice(0, 497)}...` : summary
+  } catch {
+    return ''
+  }
+}
+
 // ── Active context JSON writing ──────────────────────────────────────────────
 
 async function writeActiveContext(structured: StructuredContext | null, state: AgentWatcherState, finalSnapshot = false): Promise<void> {
@@ -345,55 +382,90 @@ function trackPendingActionDrift(structured: StructuredContext | null, state: Ag
   state.pendingActionHistory = newHistory
 }
 
+
+
+
 // ── Handoff dump ─────────────────────────────────────────────────────────────
 
 async function triggerHandoffDump(triggerSizeMb: number, state: AgentWatcherState, triggerReason = 'file-size'): Promise<void> {
-  let condensedTranscript = ''
+  let prompt = ''
   if (state.currentSessionPath) {
-    condensedTranscript = await readLastJsonlMessages(state.currentSessionPath, 150)
-    if (condensedTranscript) log('handoff: using jsonl as source (' + condensedTranscript.length + ' chars)', state.agentName)
+    const canUseDiscord = Boolean(config.discordBotToken && config.discordChannelId && config.discordBotUserId)
+    if (canUseDiscord) {
+      const sessionStartIso = await readSessionStartIso(state.currentSessionPath)
+      if (sessionStartIso) {
+        try {
+          const discordHistory = await readDiscordHistory(
+            config.discordChannelId,
+            config.discordBotToken,
+            sessionStartIso,
+            config.discordBotUserId,
+          )
+          if (discordHistory) {
+            const structuredFacts = await extractStructuredFacts(state.currentSessionPath)
+            prompt = [
+              'You are summarizing an AI assistant session for context handoff.',
+              '',
+              'PRIMARY SOURCE - Discord conversation (human-readable):',
+              discordHistory,
+              '',
+              'SUPPLEMENTAL - Key actions from session log:',
+              structuredFacts || '(none)',
+              '',
+              'Extract: (1) Current task in 1 sentence, (2) Key decisions bullet list max 10 most recent first, (3) What was being worked on most recently, (4) Immediate next steps max 5.',
+              'Keep under 400 words. Focus on decisions and outcomes.',
+            ].join('\n')
+            log(`handoff: using Discord history as primary source (${discordHistory.length} chars)`, state.agentName)
+          } else {
+            warn('handoff: Discord history was empty, falling back to jsonl prompt source', state.agentName)
+          }
+        } catch (error) {
+          warn(`handoff: Discord history fetch failed, falling back to jsonl prompt source: ${String(error)}`, state.agentName)
+        }
+      }
+    }
+
+    if (!prompt) {
+      const condensedTranscript = await readLastJsonlMessages(state.currentSessionPath, 150)
+      if (condensedTranscript) {
+        prompt = [
+          `You are summarizing an ongoing AI assistant session for agent "${state.agentName}" for context handoff.`,
+          'Read the transcript below and extract:',
+          '1. Current task/project (1 sentence — what is being worked on RIGHT NOW)',
+          '2. Key decisions made this session (bullet list, max 15, most recent first)',
+          '3. Files/code changed (bullet list with what changed)',
+          '4. What was being worked on in the most recent messages',
+          '5. Immediate next steps (ordered list)',
+          '',
+          'Detect the primary domain of the work from the transcript:',
+          '- infrastructure: server setup, networking, deployment, Docker, K8s, CI/CD',
+          '- coding: writing/debugging code, implementing features, refactoring',
+          '- email: email management, correspondence, communication',
+          '- business/finance: invoicing, contracts, client management, accounting',
+          '- general: everything else',
+          'Prepend your summary with: **Domain:** <detected domain>',
+          '',
+          'Keep it under 600 words. Be specific. Focus on recent activity but capture the full arc.',
+          '',
+          'TRANSCRIPT (beginning + recent):',
+          condensedTranscript,
+        ].join('\n')
+        log('handoff: using jsonl as source (' + condensedTranscript.length + ' chars)', state.agentName)
+      }
+    }
   }
-  if (!condensedTranscript) {
+  if (!prompt) {
     warn('handoff trigger skipped: no transcript available', state.agentName)
     return
   }
 
-  // Task-aware summarization prompt with domain detection
-  const prompt = [
-    `You are summarizing an ongoing AI assistant session for agent "${state.agentName}" for context handoff.`,
-    'Read the transcript below and extract:',
-    '1. Current task/project (1 sentence \u2014 what is being worked on RIGHT NOW)',
-    '2. Key decisions made this session (bullet list, max 15, most recent first)',
-    '3. Files/code changed (bullet list with what changed)',
-    '4. What was being worked on in the most recent messages',
-    '5. Immediate next steps (ordered list)',
-    '',
-    'Detect the primary domain of the work from the transcript:',
-    '- infrastructure: server setup, networking, deployment, Docker, K8s, CI/CD',
-    '- coding: writing/debugging code, implementing features, refactoring',
-    '- email: email management, correspondence, communication',
-    '- business/finance: invoicing, contracts, client management, accounting',
-    '- general: everything else',
-    'Prepend your summary with: **Domain:** <detected domain>',
-    '',
-    'Keep it under 600 words. Be specific. Focus on recent activity but capture the full arc.',
-    '',
-    'TRANSCRIPT (beginning + recent):',
-    condensedTranscript,
-  ].join('\n')
-
   const llmResult = await callLlm(prompt)
-  let summary: string
-  let structured: StructuredContext | null = null
-
-  if (llmResult) {
-    summary = llmResult.narrative
-    structured = llmResult.structured
-  } else {
-    warn('handoff summary unavailable; writing raw transcript tail as fallback', state.agentName)
-    const tail = condensedTranscript.split('\n').slice(-150).join('\n')
-    summary = `## Raw Transcript Tail (last 150 lines \u2014 LLM unavailable)\n\n${tail}`
+  if (!llmResult) {
+    warn('handoff summary unavailable; skipping handoff write and Locigram push', state.agentName)
+    return
   }
+  const summary = llmResult.narrative
+  const structured = llmResult.structured
 
   const now = new Date()
 
