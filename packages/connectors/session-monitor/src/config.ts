@@ -32,10 +32,12 @@ export const config = {
   obsidianVault:    process.env.OBSIDIAN_VAULT ?? null as string | null,
 
   // Optional — Discord
+  // DISCORD_WEBHOOK_URL: post handoff summaries to this webhook
+  // DISCORD_BOT_TOKEN: enables reading channel history as primary summarization source
+  //   Channel ID is derived automatically from the session key (agent:*:discord:channel:{id})
+  //   Bot user ID is resolved automatically via /users/@me (no config needed)
   discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL ?? null as string | null,
   discordBotToken:   process.env.DISCORD_BOT_TOKEN || '',
-  discordChannelId:  process.env.DISCORD_CHANNEL_ID || '',
-  discordBotUserId:  process.env.DISCORD_BOT_USER_ID || '',
 
   // Connector framework (Phase 3)
   connectorToken:      process.env.LOCIGRAM_CONNECTOR_TOKEN ?? '',

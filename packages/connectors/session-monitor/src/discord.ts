@@ -11,6 +11,12 @@ interface DiscordApiMessage {
   }
 }
 
+interface DiscordCurrentUser {
+  id: string
+  username: string
+  bot?: boolean
+}
+
 function formatTime(date: Date): string {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
@@ -59,7 +65,21 @@ function httpGetJson<T>(urlString: string, botToken: string, timeoutMs = 30_000)
   })
 }
 
-export async function readDiscordHistory(channelId: string, botToken: string, sinceIso: string, botUserId: string): Promise<string> {
+/** Fetch the bot's own user ID from Discord — cached after first successful call. */
+let cachedBotUserId: string | null = null
+export async function resolveBotUserId(botToken: string): Promise<string | null> {
+  if (cachedBotUserId) return cachedBotUserId
+  try {
+    const user = await httpGetJson<DiscordCurrentUser>('https://discord.com/api/v10/users/@me', botToken, 10_000)
+    if (user?.id) {
+      cachedBotUserId = user.id
+      return user.id
+    }
+  } catch { /* non-fatal */ }
+  return null
+}
+
+export async function readDiscordHistory(channelId: string, botToken: string, sinceIso: string, botUserId: string | null): Promise<string> {
   const messages: DiscordApiMessage[] = []
   let after = isoToDiscordSnowflake(sinceIso)
 

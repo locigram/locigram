@@ -4,7 +4,7 @@ import path from 'node:path'
 import http from 'node:http'
 import https from 'node:https'
 import { config } from './config'
-import { readDiscordHistory } from './discord'
+import { readDiscordHistory, resolveBotUserId } from './discord'
 import { pushToLocigram, flushSyncReport } from './ingest'
 
 const LOG_PREFIX = '[session-monitor]'
@@ -46,6 +46,8 @@ interface AgentWatcherState {
   lastSessionSwitchAt: number
   lastStructured: StructuredContext | null
   pendingActionHistory: Map<string, number>
+  /** Discord channel ID derived from the session key — null for non-Discord sessions */
+  discordChannelId: string | null
 }
 
 interface PendingEntry {
@@ -121,6 +123,26 @@ async function findAllActiveSessions(agentName: string): Promise<string[]> {
 
 function deriveSessionId(filePath: string): string {
   return path.basename(filePath, '.jsonl')
+}
+
+/**
+ * Derive the Discord channel ID for a session by reverse-looking up the session UUID
+ * in sessions.json and parsing the session key format: agent:*:discord:channel:{channelId}
+ * Returns null for non-Discord sessions or if the lookup fails.
+ */
+async function deriveDiscordChannelId(agentName: string, sessionId: string): Promise<string | null> {
+  const sessionsJsonPath = path.join(config.agentsDir, agentName, 'sessions', 'sessions.json')
+  try {
+    const raw = await fsp.readFile(sessionsJsonPath, 'utf8')
+    const sessions = JSON.parse(raw) as Record<string, { sessionId?: string }>
+    for (const [key, val] of Object.entries(sessions)) {
+      if (val?.sessionId !== sessionId) continue
+      // Key format: agent:{agentName}:discord:channel:{channelId}
+      const match = key.match(/^agent:[^:]+:discord:channel:(\d+)$/)
+      if (match) return match[1]
+    }
+  } catch { /* sessions.json missing or unreadable — non-fatal */ }
+  return null
 }
 
 // ── JSONL parsing (exact port from monitor.ts) ───────────────────────────────
@@ -485,16 +507,18 @@ async function triggerHandoffDump(triggerSizeMb: number, state: AgentWatcherStat
   let prompt = ''
   let discordSourceData: { discordHistory: string; structuredFacts: string; sessionStartIso: string } | null = null
   if (state.currentSessionPath) {
-    const canUseDiscord = Boolean(config.discordBotToken && config.discordChannelId && config.discordBotUserId)
+    const canUseDiscord = Boolean(config.discordBotToken && state.discordChannelId)
     if (canUseDiscord) {
       const sessionStartIso = await readSessionStartIso(state.currentSessionPath)
       if (sessionStartIso) {
         try {
+          // Resolve bot user ID dynamically (cached after first call)
+          const botUserId = await resolveBotUserId(config.discordBotToken)
           const discordHistory = await readDiscordHistory(
-            config.discordChannelId,
+            state.discordChannelId!,
             config.discordBotToken,
             sessionStartIso,
-            config.discordBotUserId,
+            botUserId,
           )
           if (discordHistory) {
             const structuredFacts = await extractStructuredFacts(state.currentSessionPath)
@@ -777,6 +801,11 @@ async function attachSessionFile(sessionPath: string, state: AgentWatcherState):
   state.lastReadPosition = 0
   state.pendingLineBuffer = ''
   state.lastSessionSwitchAt = now
+  // Derive Discord channel ID from session key (agent:*:discord:channel:{id})
+  state.discordChannelId = await deriveDiscordChannelId(state.agentName, state.currentSessionId)
+  if (state.discordChannelId) {
+    log(`discord channel derived from session: ${state.discordChannelId}`, state.agentName)
+  }
   log(`session file found: ${sessionPath}`, state.agentName)
   await ensureTranscriptDir()
   const initialStat = await fsp.stat(sessionPath)
@@ -828,6 +857,7 @@ async function discoverAndSyncSessions(): Promise<void> {
           lastSessionSwitchAt: 0,
           lastStructured: null,
           pendingActionHistory: new Map(),
+          discordChannelId: null,
         }
         sessionWatchers.set(key, state)
         log(`new session discovered: ${agentName}/${sessionId}`, agentName)
