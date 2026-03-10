@@ -48,6 +48,15 @@ interface AgentWatcherState {
   pendingActionHistory: Map<string, number>
 }
 
+interface PendingEntry {
+  sessionId: string
+  sessionStartIso: string
+  discordHistory: string
+  structuredFacts: string
+  failedAt: string
+  agentName: string
+}
+
 // ── State ────────────────────────────────────────────────────────────────────
 
 const sessionWatchers = new Map<string, AgentWatcherState>()
@@ -362,6 +371,88 @@ async function writeActiveContext(structured: StructuredContext | null, state: A
   log(`active-context.json written${finalSnapshot ? ' (final snapshot)' : ''}: ${contextPath}`, state.agentName)
 }
 
+// ── Pending summary retry queue ───────────────────────────────────────────────
+
+function pendingDir(agentName: string): string {
+  return path.join(config.agentsDir, agentName, 'pending-summaries')
+}
+
+async function savePending(entry: PendingEntry): Promise<void> {
+  const dir = pendingDir(entry.agentName)
+  await fsp.mkdir(dir, { recursive: true })
+  const filename = `${entry.sessionId}-${Date.now()}.json`
+  await fsp.writeFile(path.join(dir, filename), JSON.stringify(entry, null, 2), 'utf8')
+}
+
+async function loadPending(agentName: string): Promise<Array<{ path: string; entry: PendingEntry }>> {
+  const dir = pendingDir(agentName)
+  let files: string[]
+  try {
+    files = await fsp.readdir(dir)
+  } catch {
+    return []
+  }
+  const results: Array<{ path: string; entry: PendingEntry }> = []
+  for (const file of files) {
+    if (!file.endsWith('.json')) continue
+    const filePath = path.join(dir, file)
+    try {
+      const raw = await fsp.readFile(filePath, 'utf8')
+      results.push({ path: filePath, entry: JSON.parse(raw) })
+    } catch { /* skip corrupt files */ }
+  }
+  results.sort((a, b) => a.entry.failedAt.localeCompare(b.entry.failedAt))
+  return results
+}
+
+async function deletePending(filePath: string): Promise<void> {
+  try {
+    await fsp.unlink(filePath)
+  } catch { /* swallow */ }
+}
+
+async function processPendingQueue(state: AgentWatcherState): Promise<void> {
+  const pending = await loadPending(state.agentName)
+  if (pending.length === 0) return
+
+  log(`processing ${pending.length} pending summary retries`, state.agentName)
+  let processed = 0
+
+  for (const { path: filePath, entry } of pending) {
+    if (processed >= 5) break
+
+    const prompt = [
+      'You are summarizing an AI assistant session for context handoff.',
+      '',
+      'PRIMARY SOURCE - Discord conversation (human-readable):',
+      entry.discordHistory,
+      '',
+      'SUPPLEMENTAL - Key actions from session log:',
+      entry.structuredFacts || '(none)',
+      '',
+      'Extract: (1) Current task in 1 sentence, (2) Key decisions bullet list max 10 most recent first, (3) What was being worked on most recently, (4) Immediate next steps max 5.',
+      'Keep under 400 words. Focus on decisions and outcomes.',
+    ].join('\n')
+
+    const llmResult = await callLlm(prompt)
+    if (!llmResult) {
+      warn(`pending retry: LLM still unavailable, will retry later`, state.agentName)
+      break
+    }
+
+    try {
+      const sessionLocus = `agent/${entry.agentName}/session/${entry.sessionId}`
+      await pushToLocigram(entry.agentName, entry.sessionId, llmResult.narrative, new Date(), sessionLocus)
+      await deletePending(filePath)
+      log(`pending retry: successfully processed queued summary for session ${entry.sessionId}`, state.agentName)
+      processed++
+    } catch (e: any) {
+      warn(`pending retry: Locigram push failed for ${entry.sessionId}: ${e.message}`, state.agentName)
+      break
+    }
+  }
+}
+
 // ── Pending action drift detection ───────────────────────────────────────────
 
 function trackPendingActionDrift(structured: StructuredContext | null, state: AgentWatcherState): void {
@@ -388,7 +479,11 @@ function trackPendingActionDrift(structured: StructuredContext | null, state: Ag
 // ── Handoff dump ─────────────────────────────────────────────────────────────
 
 async function triggerHandoffDump(triggerSizeMb: number, state: AgentWatcherState, triggerReason = 'file-size'): Promise<void> {
+  // Process any pending summaries from previous LLM failures
+  await processPendingQueue(state)
+
   let prompt = ''
+  let discordSourceData: { discordHistory: string; structuredFacts: string; sessionStartIso: string } | null = null
   if (state.currentSessionPath) {
     const canUseDiscord = Boolean(config.discordBotToken && config.discordChannelId && config.discordBotUserId)
     if (canUseDiscord) {
@@ -415,6 +510,7 @@ async function triggerHandoffDump(triggerSizeMb: number, state: AgentWatcherStat
               'Extract: (1) Current task in 1 sentence, (2) Key decisions bullet list max 10 most recent first, (3) What was being worked on most recently, (4) Immediate next steps max 5.',
               'Keep under 400 words. Focus on decisions and outcomes.',
             ].join('\n')
+            discordSourceData = { discordHistory, structuredFacts, sessionStartIso }
             log(`handoff: using Discord history as primary source (${discordHistory.length} chars)`, state.agentName)
           } else {
             warn('handoff: Discord history was empty, falling back to jsonl prompt source', state.agentName)
@@ -461,7 +557,24 @@ async function triggerHandoffDump(triggerSizeMb: number, state: AgentWatcherStat
 
   const llmResult = await callLlm(prompt)
   if (!llmResult) {
-    warn('handoff summary unavailable; skipping handoff write and Locigram push', state.agentName)
+    if (discordSourceData) {
+      const sessionId = state.currentSessionPath ? deriveSessionId(state.currentSessionPath) : state.currentSessionId
+      try {
+        await savePending({
+          sessionId,
+          sessionStartIso: discordSourceData.sessionStartIso,
+          discordHistory: discordSourceData.discordHistory,
+          structuredFacts: discordSourceData.structuredFacts,
+          failedAt: new Date().toISOString(),
+          agentName: state.agentName,
+        })
+        log('LLM unavailable; queued Discord snapshot for retry', state.agentName)
+      } catch (e: any) {
+        warn(`failed to save pending entry: ${e.message}`, state.agentName)
+      }
+    } else {
+      warn('handoff summary unavailable; skipping handoff write and Locigram push', state.agentName)
+    }
     return
   }
   const summary = llmResult.narrative
