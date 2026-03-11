@@ -11,16 +11,15 @@ export interface FTSResult {
   id: string
   content: string
   rank: number         // ts_rank_cd score
-  headline: string     // highlighted snippet
 }
 
 export interface FTSOptions {
   palaceId: string
   locus?: string
   sourceType?: string
+  connector?: string
   category?: string
   limit?: number
-  highlightMaxWords?: number
 }
 
 /**
@@ -35,7 +34,6 @@ export async function searchFTS(
   opts: FTSOptions,
 ): Promise<FTSResult[]> {
   const limit = opts.limit ?? 20
-  const hlMaxWords = opts.highlightMaxWords ?? 35
 
   // Build dynamic WHERE clauses with parameterized values
   const conditions = [
@@ -51,6 +49,9 @@ export async function searchFTS(
   if (opts.sourceType) {
     conditions.push(sql`l.source_type = ${opts.sourceType}`)
   }
+  if (opts.connector) {
+    conditions.push(sql`l.connector = ${opts.connector}`)
+  }
   if (opts.category) {
     conditions.push(sql`l.category = ${opts.category}`)
   }
@@ -65,11 +66,7 @@ export async function searchFTS(
         ts_rank_cd(
           to_tsvector('english', l.content),
           websearch_to_tsquery('english', ${query})
-        ) AS rank,
-        ts_headline('english', l.content,
-          websearch_to_tsquery('english', ${query}),
-          ${'MaxWords=' + hlMaxWords + ', MinWords=10, StartSel=**, StopSel=**'}
-        ) AS headline
+        ) AS rank
       FROM locigrams l
       WHERE ${where}
       ORDER BY rank DESC

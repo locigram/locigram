@@ -69,7 +69,8 @@ export async function hybridRecall(
   const hasStructuredFilter = !!(opts.subject || opts.predicate)
   const runVector = mode === 'auto' || mode === 'vector' || mode === 'hybrid'
   const runFTS = mode === 'auto' || mode === 'fts' || mode === 'hybrid'
-  const runStructured = mode === 'structured' || (mode === 'auto' && hasStructuredFilter)
+  // Structured lane requires at least subject or predicate — without them it's just "latest N"
+  const runStructured = hasStructuredFilter && (mode === 'structured' || mode === 'auto' || mode === 'hybrid')
 
   const rankedLists: { lane: string; ids: string[] }[] = []
   const activeLanes: string[] = []
@@ -104,6 +105,7 @@ export async function hybridRecall(
         palaceId: opts.palaceId,
         locus: opts.locus,
         sourceType: opts.sourceType,
+        connector: opts.connector,
         category: opts.category,
         limit: fetchLimit,
       }
