@@ -25,29 +25,29 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
   return {
 
     memory_recall: {
-      description: 'Semantically search memories in the palace. Returns the most relevant locigrams for a given query.',
+      description: 'Search memories using hybrid retrieval (vector + full-text + structured). Modes: auto (default, picks best combo), vector (semantic only), fts (keyword/lexical only), structured (SPO filter only), hybrid (all lanes).',
       schema: z.object({
-        query:    z.string().describe('What to search for'),
-        locus:    z.string().optional().describe('Namespace filter e.g. people/, business/, project/locigram'),
-        category: z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation', 'convention', 'checkpoint']).optional().describe('Filter by memory category'),
-        limit:    z.number().int().min(1).max(20).default(10).describe('Max results'),
+        query:     z.string().describe('What to search for'),
+        locus:     z.string().optional().describe('Namespace filter e.g. people/, business/, project/locigram'),
+        category:  z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation', 'convention', 'checkpoint']).optional().describe('Filter by memory category'),
+        subject:   z.string().optional().describe('Filter by structured subject (enables structured lane)'),
+        predicate: z.string().optional().describe('Filter by structured predicate (enables structured lane)'),
+        mode:      z.enum(['auto', 'vector', 'fts', 'structured', 'hybrid']).default('auto').describe('Retrieval mode'),
+        limit:     z.number().int().min(1).max(20).default(10).describe('Max results'),
       }),
-      handler: async ({ query, locus, category, limit }: { query: string; locus?: string; category?: string; limit: number }) => {
-        const queryVector = await vector.embed(query)
-        const results = await vector.search(collection, queryVector, { palaceId, locus, category, limit })
-
-        if (results.length === 0) return { results: [], query }
-
-        const ids = results.map(r => r.id)
-        const rows = await db.select().from(locigrams)
-          .where(and(eq(locigrams.palaceId, palaceId), inArray(locigrams.id, ids)))
-
-        const rowMap = new Map(rows.map(r => [r.id, r]))
-        const merged = results
-          .map(r => ({ ...rowMap.get(r.id), score: r.score }))
-          .filter(r => 'id' in r)
-
-        return { results: merged, query }
+      handler: async ({ query, locus, category, subject, predicate, mode, limit }: { query: string; locus?: string; category?: string; subject?: string; predicate?: string; mode: string; limit: number }) => {
+        const { hybridRecall } = await import('../hybrid-recall')
+        const result = await hybridRecall(db, vector, {
+          query,
+          palaceId,
+          locus,
+          category,
+          subject,
+          predicate,
+          mode: mode as any,
+          limit,
+        })
+        return result
       },
     },
 
