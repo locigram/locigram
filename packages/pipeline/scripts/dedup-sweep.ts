@@ -10,7 +10,8 @@
 import postgres from 'postgres'
 
 const DRY_RUN = process.argv.includes('--dry-run')
-const DB_URL = process.env.DATABASE_URL ?? 'postgresql://locigram:388d3ec5561e2d52726d6cea30c39518732c657ee1fb07b4@10.10.100.90:30311/locigram'
+const DB_URL = process.env.DATABASE_URL
+if (!DB_URL) { console.error('[dedup] DATABASE_URL is required'); process.exit(1) }
 
 const sql = postgres(DB_URL, { max: 5 })
 
