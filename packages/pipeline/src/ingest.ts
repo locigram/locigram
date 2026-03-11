@@ -49,7 +49,15 @@ export async function ingest(
             is_reference:  raw.preClassified.isReference,
             isReference:   raw.preClassified.isReference,
             referenceType: raw.preClassified.referenceType ?? null,
-            locigrams:     [{ content: raw.content, confidence: 1.0, category: 'fact' as const, subject: null, predicate: null, object_val: null, durability_class: (raw.preClassified!.isReference ? 'permanent' : 'active') as const }],
+            locigrams:     [{
+              content: raw.content,
+              confidence: 1.0,
+              category: 'fact' as const,
+              subject: raw.preClassified.subject ?? null,
+              predicate: raw.preClassified.predicate ?? null,
+              object_val: raw.preClassified.objectVal ?? null,
+              durability_class: (raw.preClassified.durabilityClass ?? (raw.preClassified!.isReference ? 'permanent' : 'active')) as 'permanent' | 'stable' | 'active' | 'session' | 'checkpoint',
+            }],
           }
         : await extractFromRaw(raw, config)
 

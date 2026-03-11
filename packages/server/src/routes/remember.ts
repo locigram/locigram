@@ -6,7 +6,7 @@ import { locigrams, sources } from '@locigram/db'
 
 const schema = z.object({
   content:    z.string().min(1),
-  sourceType: z.enum(['email','chat','sms','llm-session','manual','system','webhook']).default('manual'),
+  sourceType: z.enum(['email','chat','sms','llm-session','manual','system','webhook','enrichment']).default('manual'),
   sourceRef:  z.string().optional(),
   locus:      z.string().default('personal/general'),
   entities:   z.array(z.string()).default([]),
@@ -14,6 +14,11 @@ const schema = z.object({
   metadata:   z.record(z.string(), z.unknown()).default({}),
   connector:  z.string().optional(),
   rawUrl:     z.string().optional(),
+  // Structured fields (Phase 2.6)
+  subject:          z.string().optional(),
+  predicate:        z.string().optional(),
+  object_val:       z.string().optional(),
+  durability_class: z.enum(['permanent', 'stable', 'active', 'session', 'checkpoint']).optional(),
 })
 
 export const rememberRoute = new Hono()
@@ -24,14 +29,18 @@ rememberRoute.post('/', zValidator('json', schema), async (c) => {
   const body = c.req.valid('json')
 
   const [locigram] = await db.insert(locigrams).values({
-    content:    body.content,
-    sourceType: body.sourceType,
-    sourceRef:  body.sourceRef,
-    locus:      body.locus,
-    entities:   body.entities,
-    confidence: body.confidence,
-    metadata:   body.metadata,
-    palaceId:   palace.id,
+    content:         body.content,
+    sourceType:      body.sourceType,
+    sourceRef:       body.sourceRef,
+    locus:           body.locus,
+    entities:        body.entities,
+    confidence:      body.confidence,
+    metadata:        body.metadata,
+    subject:         body.subject ?? null,
+    predicate:       body.predicate ?? null,
+    objectVal:       body.object_val ?? null,
+    durabilityClass: body.durability_class ?? 'active',
+    palaceId:        palace.id,
   }).returning()
 
   // Record provenance

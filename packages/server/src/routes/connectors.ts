@@ -293,6 +293,11 @@ const ingestSchema = z.object({
     locus:       z.string().optional(),
     importance:  z.enum(['low', 'normal', 'high']).optional(),
     metadata:    z.record(z.string(), z.unknown()).optional(),
+    // Structured fields (Phase 2.6) — pass through to pipeline
+    subject:          z.string().optional(),
+    predicate:        z.string().optional(),
+    object_val:       z.string().optional(),
+    durability_class: z.enum(['permanent', 'stable', 'active', 'session', 'checkpoint']).optional(),
   })).min(1).max(100),
 })
 
@@ -326,6 +331,18 @@ connectorsRoute.post('/:id/ingest', zValidator('json', ingestSchema), async (c) 
       connector_instance_id: instance.id,
       ...(m.importance ? { importance: m.importance } : {}),
     },
+    // Pass structured fields through if connector provides them
+    ...(m.subject || m.predicate || m.object_val || m.durability_class ? {
+      preClassified: {
+        locus:           m.locus ?? `connectors/${instance.connectorType}`,
+        entities:        [],
+        confidence:      1.0,
+        subject:         m.subject ?? undefined,
+        predicate:       m.predicate ?? undefined,
+        objectVal:       m.object_val ?? undefined,
+        durabilityClass: m.durability_class ?? undefined,
+      },
+    } : {}),
   }))
 
   const { ingest } = await import('@locigram/pipeline')
