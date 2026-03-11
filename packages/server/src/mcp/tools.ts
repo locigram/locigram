@@ -486,10 +486,10 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
               .limit(10)
           : []
 
-        // Tier 5: Recent active context (last 7 days, not session-durability)
+        // Tier 5: Recent active context (last 7 days, exclude session + checkpoint durability to avoid double-counting)
         const recentContext = (strategy === 'auto' || strategy === 'full')
           ? await db.select().from(locigrams)
-              .where(and(...baseConds, gte(locigrams.createdAt, since7d), sql`${locigrams.durabilityClass} != 'session'`))
+              .where(and(...baseConds, gte(locigrams.createdAt, since7d), sql`${locigrams.durabilityClass} NOT IN ('session', 'checkpoint')`))
               .orderBy(desc(locigrams.createdAt))
               .limit(10)
           : []
