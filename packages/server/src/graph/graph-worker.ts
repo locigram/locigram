@@ -4,10 +4,10 @@
  * writes them to Memgraph, marks them done.
  * If Memgraph is down, records stay NULL and get retried next tick.
  */
-import { locigrams } from '@locigram/db'
+import { locigrams, entityMentions, entities as entitiesTable } from '@locigram/db'
 import { eq, and, isNull } from 'drizzle-orm'
 import type { DB } from '@locigram/db'
-import { writeMemoryToGraph, parseAgentFromLocus } from './graph-write'
+import { writeMemoryToGraph, writeEntityMentionsToGraph, parseAgentFromLocus } from './graph-write'
 import { getGraphDriver } from './graph-client'
 
 export function startGraphWorker(
@@ -62,6 +62,38 @@ export function startGraphWorker(
             occurredAt:  loc.occurredAt ?? loc.createdAt,
             connector:   loc.connector,
           })
+
+          // Sync entity mentions → graph (Phase 9.4)
+          try {
+            const mentions = await db
+              .select({
+                locigramId: entityMentions.locigramId,
+                entityId:   entityMentions.entityId,
+                confidence: entityMentions.confidence,
+                source:     entityMentions.source,
+                entityName: entitiesTable.name,
+                entityType: entitiesTable.type,
+              })
+              .from(entityMentions)
+              .innerJoin(entitiesTable, eq(entityMentions.entityId, entitiesTable.id))
+              .where(eq(entityMentions.locigramId, loc.id))
+
+            if (mentions.length > 0) {
+              await writeEntityMentionsToGraph(
+                loc.id,
+                mentions.map(m => ({
+                  locigramId: m.locigramId,
+                  entityId:   m.entityId!,
+                  entityName: m.entityName,
+                  entityType: m.entityType,
+                  confidence: m.confidence,
+                  source:     m.source,
+                })),
+              )
+            }
+          } catch (mentionErr) {
+            console.warn(`[graph-worker] entity mentions failed for ${loc.id}:`, (mentionErr as Error).message)
+          }
 
           await db.update(locigrams)
             .set({ graphSyncedAt: new Date() })

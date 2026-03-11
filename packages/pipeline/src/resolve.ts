@@ -1,5 +1,5 @@
-import { entities as entitiesTable } from '@locigram/db'
-import { eq, and, sql } from 'drizzle-orm'
+import { entities as entitiesTable, entityMentions } from '@locigram/db'
+import { eq, and, sql, count, avg } from 'drizzle-orm'
 import type { DB } from '@locigram/db'
 import type { ExtractionResult } from './extract'
 
@@ -52,4 +52,60 @@ export async function resolveEntities(
   }
 
   return resolvedNames
+}
+
+/**
+ * Phase 9.3 — Entity type enforcement via majority vote across mentions.
+ * For a given entity, count mentions by type weighted by avg confidence.
+ * If the winning type differs from the current canonical type, update it.
+ *
+ * Returns true if the type was changed.
+ */
+export async function enforceEntityType(
+  db: DB,
+  entityId: string,
+): Promise<boolean> {
+  // Get current entity
+  const [entity] = await db
+    .select()
+    .from(entitiesTable)
+    .where(eq(entitiesTable.id, entityId))
+    .limit(1)
+
+  if (!entity) return false
+
+  // Aggregate mentions by type: count × avg confidence = score
+  const typeVotes = await db
+    .select({
+      type:       entityMentions.type,
+      voteCount:  count(),
+      avgConf:    avg(entityMentions.confidence),
+    })
+    .from(entityMentions)
+    .where(eq(entityMentions.entityId, entityId))
+    .groupBy(entityMentions.type)
+
+  if (typeVotes.length === 0) return false
+
+  // Find winning type by score = count × avgConfidence
+  let bestType = entity.type
+  let bestScore = 0
+  for (const vote of typeVotes) {
+    const score = Number(vote.voteCount) * Number(vote.avgConf ?? 0)
+    if (score > bestScore) {
+      bestScore = score
+      bestType = vote.type
+    }
+  }
+
+  if (bestType !== entity.type) {
+    await db
+      .update(entitiesTable)
+      .set({ type: bestType, updatedAt: new Date() })
+      .where(eq(entitiesTable.id, entityId))
+    console.log(`[resolve] entity "${entity.name}" type changed: ${entity.type} → ${bestType} (score: ${bestScore.toFixed(2)})`)
+    return true
+  }
+
+  return false
 }

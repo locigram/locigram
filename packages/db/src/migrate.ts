@@ -283,6 +283,27 @@ await sql`CREATE INDEX IF NOT EXISTS connector_instances_type_idx   ON connector
 // connector_syncs
 await sql`CREATE INDEX IF NOT EXISTS connector_syncs_instance_idx ON connector_syncs(instance_id, started_at DESC)`
 
+// ── Entity mentions table (2026-03-11 — Phase 9) ─────────────────────────────
+await sql`
+  CREATE TABLE IF NOT EXISTS entity_mentions (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    locigram_id UUID NOT NULL REFERENCES locigrams(id) ON DELETE CASCADE,
+    entity_id   UUID REFERENCES entities(id) ON DELETE SET NULL,
+    raw_text    TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    confidence  REAL NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'gliner',
+    span_start  INTEGER,
+    span_end    INTEGER,
+    palace_id   TEXT NOT NULL REFERENCES palaces(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`
+await sql`CREATE INDEX IF NOT EXISTS entity_mentions_locigram_idx      ON entity_mentions(locigram_id)`
+await sql`CREATE INDEX IF NOT EXISTS entity_mentions_entity_idx        ON entity_mentions(entity_id)`
+await sql`CREATE INDEX IF NOT EXISTS entity_mentions_palace_type_idx   ON entity_mentions(palace_id, type)`
+await sql`CREATE INDEX IF NOT EXISTS entity_mentions_palace_source_idx ON entity_mentions(palace_id, source)`
+
 // ── Seed palace ───────────────────────────────────────────────────────────────
 
 await sql`

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { RawMemory } from '@locigram/core'
 import type { PipelineConfig, LLMRole } from './config'
 import { REFERENCE_TYPES } from '@locigram/db'
-import { extractEntitiesWithGLiNER } from './gliner'
+import { extractEntitiesWithGLiNER, type GLiNERMention } from './gliner'
 import { isNoise } from './noise-filter'
 
 // ── Regex patterns for reference data detection ───────────────────────────────
@@ -49,6 +49,8 @@ const ExtractionSchema = z.object({
 export type ExtractionResult = z.infer<typeof ExtractionSchema> & {
   isReference:   boolean
   referenceType: typeof REFERENCE_TYPES[number] | null
+  /** GLiNER mentions (above 0.5 confidence) — for entity_mentions storage */
+  glinerMentions: GLiNERMention[]
 }
 
 const SYSTEM_PROMPT = `You are a memory extraction assistant. Given text, extract structured memory.
@@ -123,6 +125,7 @@ function fallback(raw: RawMemory, isReference = false): ExtractionResult {
     reference_type: null,
     isReference,
     referenceType: null,
+    glinerMentions: [],
     locigrams:     [{ content: raw.content, confidence: 0.5, category: 'observation' as const, subject: null, predicate: null, object_val: null, durability_class: 'active' as const }],
   }
 }
@@ -153,8 +156,9 @@ export async function extractFromRaw(
   try {
     // GLiNER pre-extraction (fast, optional — falls back gracefully if unavailable)
     const glinerResult = await extractEntitiesWithGLiNER(raw.content)
+    const glinerMentions = glinerResult?.mentions ?? []
     if (glinerResult) {
-      console.log(`[pipeline] GLiNER found ${glinerResult.entities.length} entities in ${glinerResult.durationMs}ms`)
+      console.log(`[pipeline] GLiNER found ${glinerResult.entities.length} entities (${glinerMentions.length} mentions ≥0.5) in ${glinerResult.durationMs}ms`)
     }
 
     const res = await fetch(`${role.url}/chat/completions`, {
@@ -215,6 +219,7 @@ export async function extractFromRaw(
         is_reference:  isRef,
         isReference:   isRef,
         referenceType: isRef ? (parsed.data.reference_type ?? null) : null,
+        glinerMentions,
       }
     } catch (e) {
       console.warn('[pipeline] JSON parse failed for content:', content)

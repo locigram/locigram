@@ -26,12 +26,22 @@ const TYPE_MAP: Record<string, 'person' | 'org' | 'product' | 'topic' | 'place'>
   date:         'topic',
 }
 
+export interface GLiNERMention {
+  rawText:    string
+  type:       string   // mapped Locigram type (person|org|product|topic|place)
+  confidence: number
+  spanStart:  number
+  spanEnd:    number
+}
+
 export interface GLiNERResult {
   entities: Array<{
     name: string
     type: 'person' | 'org' | 'product' | 'topic' | 'place'
     aliases: string[]
   }>
+  /** Raw mentions with confidence + spans for entity_mentions table */
+  mentions: GLiNERMention[]
   durationMs: number
 }
 
@@ -77,7 +87,20 @@ export async function extractEntitiesWithGLiNER(text: string): Promise<GLiNERRes
       duration_ms: number
     }
 
-    // Deduplicate by normalized text, map types
+    const CONFIDENCE_FLOOR = 0.5
+
+    // Build raw mentions (above floor) for entity_mentions storage
+    const mentions: GLiNERMention[] = data.entities
+      .filter(e => e.score >= CONFIDENCE_FLOOR)
+      .map(e => ({
+        rawText:    e.text,
+        type:       TYPE_MAP[e.type] ?? 'topic',
+        confidence: e.score,
+        spanStart:  e.start,
+        spanEnd:    e.end,
+      }))
+
+    // Deduplicate by normalized text, map types (for LLM hints — keep all above threshold 0.4)
     const seen = new Map<string, GLiNERResult['entities'][number]>()
     for (const e of data.entities) {
       const key = e.text.toLowerCase().trim()
@@ -92,6 +115,7 @@ export async function extractEntitiesWithGLiNER(text: string): Promise<GLiNERRes
 
     return {
       entities:   [...seen.values()],
+      mentions,
       durationMs: data.duration_ms,
     }
   } catch (err) {

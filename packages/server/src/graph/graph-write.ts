@@ -18,6 +18,41 @@ export function parseAgentFromLocus(locus: string): string | undefined {
   return undefined
 }
 
+export interface EntityMentionGraphInput {
+  locigramId: string
+  entityId:   string
+  entityName: string
+  entityType: string
+  confidence: number
+  source:     string
+}
+
+/**
+ * Write entity MENTIONS edges to Memgraph.
+ * Creates Entity nodes and (Memory)-[:MENTIONS]->(Entity) edges.
+ */
+export async function writeEntityMentionsToGraph(
+  locigramId: string,
+  mentions: EntityMentionGraphInput[],
+): Promise<void> {
+  for (const m of mentions) {
+    await runQuery(`
+      MERGE (e:Entity {id: $entityId})
+      SET e.name = $entityName, e.type = $entityType
+      MERGE (mem:Memory {id: $locigramId})
+      MERGE (mem)-[r:MENTIONS]->(e)
+      SET r.confidence = $confidence, r.source = $source
+    `, {
+      entityId:   m.entityId,
+      entityName: m.entityName,
+      entityType: m.entityType,
+      locigramId: m.locigramId,
+      confidence: m.confidence,
+      source:     m.source,
+    })
+  }
+}
+
 export async function writeMemoryToGraph(input: MemoryGraphInput): Promise<void> {
   const { id, palaceId, locus, sourceType, agentName, sessionId, importance, occurredAt, connector } = input
 

@@ -6,6 +6,7 @@ import { extractFromRaw } from './extract'
 import { resolveEntities } from './resolve'
 import { isDuplicate } from './dedup'
 import { qualityGate } from './noise-filter'
+import { storeGLiNERMentions, storeLLMMentions } from './mention-store'
 
 export interface IngestResult {
   stored:  number
@@ -50,6 +51,7 @@ export async function ingest(
             is_reference:  raw.preClassified.isReference,
             isReference:   raw.preClassified.isReference,
             referenceType: raw.preClassified.referenceType ?? null,
+            glinerMentions: [] as import('./gliner').GLiNERMention[],
             locigrams:     [{
               content: raw.content,
               confidence: 1.0,
@@ -113,6 +115,20 @@ export async function ingest(
           rawRef:     raw.sourceRef,
           palaceId:   config.palaceId,
         })
+
+        // 7. Store entity mentions (Phase 9 — audit trail)
+        const mentionInput = { locigramId: stored.id, palaceId: config.palaceId }
+        try {
+          if (extraction.glinerMentions?.length) {
+            await storeGLiNERMentions(db, mentionInput, extraction.glinerMentions)
+          }
+          if (extraction.entities.length) {
+            await storeLLMMentions(db, mentionInput, extraction.entities)
+          }
+        } catch (mentionErr) {
+          // Non-fatal — don't fail ingestion if mention storage fails
+          console.warn('[pipeline] mention storage error:', (mentionErr as Error).message)
+        }
 
         result.stored++
         result.ids.push(stored.id)

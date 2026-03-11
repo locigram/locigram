@@ -175,6 +175,31 @@ export const entities = pgTable(
   ],
 )
 
+// ── entity_mentions ───────────────────────────────────────────────────────────
+
+export const entityMentions = pgTable(
+  'entity_mentions',
+  {
+    id:         id(),
+    locigramId: uuid('locigram_id').notNull().references(() => locigrams.id, { onDelete: 'cascade' }),
+    entityId:   uuid('entity_id').references(() => entities.id, { onDelete: 'set null' }),
+    rawText:    text('raw_text').notNull(),
+    type:       text('type').notNull(),
+    confidence: real('confidence').notNull(),
+    source:     text('source').notNull().default('gliner'),  // gliner | llm | manual
+    spanStart:  integer('span_start'),
+    spanEnd:    integer('span_end'),
+    palaceId:   palaceId(),
+    createdAt:  now(),
+  },
+  (t) => [
+    index('entity_mentions_locigram_idx').on(t.locigramId),
+    index('entity_mentions_entity_idx').on(t.entityId),
+    index('entity_mentions_palace_type_idx').on(t.palaceId, t.type),
+    index('entity_mentions_palace_source_idx').on(t.palaceId, t.source),
+  ],
+)
+
 // ── sources ───────────────────────────────────────────────────────────────────
 
 export const sources = pgTable(
@@ -335,6 +360,7 @@ export type Palace    = typeof palaces.$inferSelect
 export type Locigram  = typeof locigrams.$inferSelect
 export type Truth     = typeof truths.$inferSelect
 export type Entity    = typeof entities.$inferSelect
+export type EntityMention   = typeof entityMentions.$inferSelect
 export type Source          = typeof sources.$inferSelect
 export type RetrievalEvent = typeof retrievalEvents.$inferSelect
 export type SyncCursor     = typeof syncCursors.$inferSelect
@@ -345,6 +371,7 @@ export type NewPalace          = typeof palaces.$inferInsert
 export type NewLocigram        = typeof locigrams.$inferInsert
 export type NewTruth           = typeof truths.$inferInsert
 export type NewEntity          = typeof entities.$inferInsert
+export type NewEntityMention   = typeof entityMentions.$inferInsert
 export type NewSource          = typeof sources.$inferInsert
 export type NewRetrievalEvent  = typeof retrievalEvents.$inferInsert
 export type NewSyncCursor      = typeof syncCursors.$inferInsert
