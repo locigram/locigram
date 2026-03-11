@@ -153,10 +153,13 @@ export async function extractFromRaw(
   // Signal 2: regex pre-check on content
   const regexIsReference = detectReferenceByRegex(raw.content)
 
+  // Capture GLiNER mentions before LLM — preserved even if LLM fails/times out
+  let glinerMentions: import('./gliner').GLiNERMention[] = []
+
   try {
     // GLiNER pre-extraction (fast, optional — falls back gracefully if unavailable)
     const glinerResult = await extractEntitiesWithGLiNER(raw.content)
-    const glinerMentions = glinerResult?.mentions ?? []
+    glinerMentions = glinerResult?.mentions ?? []
     if (glinerResult) {
       console.log(`[pipeline] GLiNER found ${glinerResult.entities.length} entities (${glinerMentions.length} mentions ≥0.5) in ${glinerResult.durationMs}ms`)
     }
@@ -174,10 +177,13 @@ export async function extractFromRaw(
       }),
     })
 
+    // Helper: fallback that preserves GLiNER mentions even on LLM failure
+    const glinerFallback = (isRef = false) => ({ ...fallback(raw, isRef), glinerMentions })
+
     if (!res.ok) {
       const errBody = await res.text().catch(() => '')
       console.warn(`[pipeline] extraction LLM error: ${res.status} ${errBody.slice(0, 300)}`)
-      return fallback(raw, connectorIsReference || regexIsReference)
+      return glinerFallback(connectorIsReference || regexIsReference)
     }
 
     const bodyText = await res.text()
@@ -187,11 +193,11 @@ export async function extractFromRaw(
       data = JSON.parse(bodyText)
     } catch (e) {
       console.warn('[pipeline] LLM returned non-JSON:', bodyText.slice(0, 300))
-      return fallback(raw, connectorIsReference || regexIsReference)
+      return glinerFallback(connectorIsReference || regexIsReference)
     }
 
     const content = data?.choices?.[0]?.message?.content
-    if (!content) return fallback(raw, connectorIsReference || regexIsReference)
+    if (!content) return glinerFallback(connectorIsReference || regexIsReference)
 
     // Strip <think> blocks and code fences
     let cleanJson = content
@@ -208,7 +214,7 @@ export async function extractFromRaw(
       const parsed = ExtractionSchema.safeParse(JSON.parse(cleanJson))
       if (!parsed.success) {
         console.warn('[pipeline] extraction schema mismatch:', parsed.error.message)
-        return fallback(raw, connectorIsReference || regexIsReference)
+        return glinerFallback(connectorIsReference || regexIsReference)
       }
 
       // Signal 3: LLM flag. Any signal = reference.
@@ -223,10 +229,11 @@ export async function extractFromRaw(
       }
     } catch (e) {
       console.warn('[pipeline] JSON parse failed for content:', content)
-      return fallback(raw, connectorIsReference || regexIsReference)
+      return glinerFallback(connectorIsReference || regexIsReference)
     }
   } catch (err) {
     console.warn('[pipeline] extraction failed:', err)
-    return fallback(raw, connectorIsReference || regexIsReference)
+    // Preserve GLiNER mentions even when LLM call throws (timeout, network error, etc.)
+    return { ...fallback(raw, connectorIsReference || regexIsReference), glinerMentions }
   }
 }
