@@ -5,6 +5,7 @@ import type { DB } from '@locigram/db'
 import type { Palace } from '@locigram/db'
 import type { SearchOptions, SearchResult } from '@locigram/vector'
 import { runQueryWithResult } from '../graph/graph-client'
+import { resolveSource, type SourceResolverConfig } from '../source-resolver'
 
 
 // ── Vector operations interface ──────────────────────────────────────────────
@@ -17,7 +18,7 @@ export interface VectorOps {
 
 // ── Tool builder ─────────────────────────────────────────────────────────────
 
-export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection: string, oauthService?: string | null) {
+export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection: string, oauthService?: string | null, sourceResolverConfig?: SourceResolverConfig) {
   const palaceId = palace.id
 
   return {
@@ -605,6 +606,22 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           .limit(5)
 
         return { ...instance, recentSyncs }
+      },
+    },
+
+    // ── Source resolution ────────────────────────────────────────────────────
+
+    memory_source: {
+      description: 'Resolve a sourceRef back to its original source material. Given a sourceRef from a recalled memory, returns the actual content (email body, chat message, vault document section, etc.) with surrounding context.',
+      schema: z.object({
+        source_ref: z.string().describe('The sourceRef to resolve (e.g. email:comms.emails:uuid-abc, obsidian:Infrastructure/K3s-Cluster.md:L45)'),
+      }),
+      handler: async ({ source_ref }: { source_ref: string }) => {
+        if (!sourceResolverConfig) {
+          return { error: 'Source resolver not configured' }
+        }
+        const resolution = await resolveSource(source_ref, sourceResolverConfig)
+        return resolution
       },
     },
   }

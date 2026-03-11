@@ -20,6 +20,7 @@ import { timelineRoute } from './routes/timeline'
 import { feedbackRoute } from './routes/feedback'
 import { bootstrapRoute } from './routes/bootstrap'
 import { createMcpHandler } from './mcp/transport'
+import type { SourceResolverConfig } from './source-resolver'
 import { autoRegisterConnectors } from './connectors'
 import { metadataRoute, protectedResourceRoute } from './oauth/metadata'
 import { clientsRoute } from './oauth/clients'
@@ -76,6 +77,13 @@ export function createApp(config: AppConfig) {
   ensureCollection(qdrant, collectionName).catch(err =>
     console.error('[app] failed to ensure Qdrant collection:', err)
   )
+
+  // Source resolver config — resolves sourceRef strings to original material
+  const sourceResolverConfig: SourceResolverConfig = {
+    openclawBasePath: process.env.OPENCLAW_BASE_PATH,
+    obsidianVaultPath: process.env.OBSIDIAN_VAULT_PATH,
+    suruDbUrl: process.env.SURU_DATABASE_URL,
+  }
 
   // Auto-register connectors from env vars — no config file needed
   const registry = autoRegisterConnectors({ db, palaceId: config.palaceId })
@@ -268,7 +276,7 @@ export function createApp(config: AppConfig) {
     const key = oauthService ?? '__master__'
     let handler = mcpHandlers.get(key)
     if (!handler) {
-      handler = createMcpHandler(db, palace, vectorClient, collectionName, oauthService)
+      handler = createMcpHandler(db, palace, vectorClient, collectionName, oauthService, sourceResolverConfig)
       mcpHandlers.set(key, handler)
     }
     return handler
