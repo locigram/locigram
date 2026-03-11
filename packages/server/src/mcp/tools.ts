@@ -6,6 +6,7 @@ import type { Palace } from '@locigram/db'
 import type { SearchOptions, SearchResult } from '@locigram/vector'
 import { runQueryWithResult } from '../graph/graph-client'
 import { resolveSource, type SourceResolverConfig } from '../source-resolver'
+import { enrichFromSource, DEFAULT_ENRICHMENT_CONFIG, type EnrichmentConfig } from '../enrichment'
 
 
 // ── Vector operations interface ──────────────────────────────────────────────
@@ -18,7 +19,7 @@ export interface VectorOps {
 
 // ── Tool builder ─────────────────────────────────────────────────────────────
 
-export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection: string, oauthService?: string | null, sourceResolverConfig?: SourceResolverConfig) {
+export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection: string, oauthService?: string | null, sourceResolverConfig?: SourceResolverConfig, enrichConfig?: EnrichmentConfig) {
   const palaceId = palace.id
 
   return {
@@ -612,16 +613,36 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
     // ── Source resolution ────────────────────────────────────────────────────
 
     memory_source: {
-      description: 'Resolve a sourceRef back to its original source material. Given a sourceRef from a recalled memory, returns the actual content (email body, chat message, vault document section, etc.) with surrounding context.',
+      description: 'Resolve a sourceRef back to its original source material. Given a sourceRef from a recalled memory, returns the actual content (email body, chat message, vault document section, etc.) with surrounding context. Set enrich=true to automatically extract and store new structured facts from the resolved material.',
       schema: z.object({
         source_ref: z.string().describe('The sourceRef to resolve (e.g. email:comms.emails:uuid-abc, obsidian:Infrastructure/K3s-Cluster.md:L45)'),
+        enrich: z.boolean().default(false).describe('If true, extract structured facts from the resolved material and ingest them into Locigram'),
       }),
-      handler: async ({ source_ref }: { source_ref: string }) => {
+      handler: async ({ source_ref, enrich }: { source_ref: string; enrich: boolean }) => {
         if (!sourceResolverConfig) {
           return { error: 'Source resolver not configured' }
         }
         const resolution = await resolveSource(source_ref, sourceResolverConfig)
-        return resolution
+
+        let enrichment = undefined
+        if (enrich && resolution.resolved) {
+          try {
+            const { defaultPipelineConfig } = await import('@locigram/pipeline')
+            const pipelineConf = { ...defaultPipelineConfig(), palaceId: palace.id }
+
+            enrichment = await enrichFromSource(
+              resolution, db, palace.id, pipelineConf as any,
+              { embed: vector.embed, upsert: vector.upsert },
+              collection,
+              enrichConfig ?? DEFAULT_ENRICHMENT_CONFIG,
+            )
+          } catch (err) {
+            console.error('[memory_source] enrichment failed:', err)
+            enrichment = { error: err instanceof Error ? err.message : String(err) }
+          }
+        }
+
+        return { ...resolution, enrichment }
       },
     },
   }

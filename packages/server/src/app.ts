@@ -21,6 +21,7 @@ import { feedbackRoute } from './routes/feedback'
 import { bootstrapRoute } from './routes/bootstrap'
 import { createMcpHandler } from './mcp/transport'
 import type { SourceResolverConfig } from './source-resolver'
+import type { EnrichmentConfig } from './enrichment'
 import { autoRegisterConnectors } from './connectors'
 import { metadataRoute, protectedResourceRoute } from './oauth/metadata'
 import { clientsRoute } from './oauth/clients'
@@ -83,6 +84,13 @@ export function createApp(config: AppConfig) {
     openclawBasePath: process.env.OPENCLAW_BASE_PATH,
     obsidianVaultPath: process.env.OBSIDIAN_VAULT_PATH,
     suruDbUrl: process.env.SURU_DATABASE_URL,
+  }
+
+  // Enrichment config — controls recall-triggered fact extraction
+  const enrichConfig: EnrichmentConfig = {
+    enabled: process.env.ENRICHMENT_ENABLED !== 'false',
+    maxFactsPerEnrichment: parseInt(process.env.ENRICHMENT_MAX_FACTS ?? '10', 10),
+    emailEnrichmentEnabled: process.env.ENRICHMENT_EMAIL === 'true',
   }
 
   // Auto-register connectors from env vars — no config file needed
@@ -276,7 +284,7 @@ export function createApp(config: AppConfig) {
     const key = oauthService ?? '__master__'
     let handler = mcpHandlers.get(key)
     if (!handler) {
-      handler = createMcpHandler(db, palace, vectorClient, collectionName, oauthService, sourceResolverConfig)
+      handler = createMcpHandler(db, palace, vectorClient, collectionName, oauthService, sourceResolverConfig, enrichConfig)
       mcpHandlers.set(key, handler)
     }
     return handler

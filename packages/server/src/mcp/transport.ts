@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { buildTools, type VectorOps } from './tools'
 import type { SourceResolverConfig } from '../source-resolver'
+import type { EnrichmentConfig } from '../enrichment'
 import type { DB, Palace } from '@locigram/db'
 
 // ── Session management ───────────────────────────────────────────────────────
@@ -48,8 +49,9 @@ export function createMcpHandler(
   collection: string,
   oauthService?: string | null,
   sourceResolverConfig?: SourceResolverConfig,
+  enrichConfig?: EnrichmentConfig,
 ): (req: Request) => Promise<Response> {
-  const tools = buildTools(db, palace, vectorClient, collection, oauthService, sourceResolverConfig)
+  const tools = buildTools(db, palace, vectorClient, collection, oauthService, sourceResolverConfig, enrichConfig)
   const sessions = new Map<string, Session>()
 
   function cleanupSession(sessionId: string) {
