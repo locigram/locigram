@@ -19,6 +19,8 @@ const schema = z.object({
   predicate:        z.string().optional(),
   object_val:       z.string().optional(),
   durability_class: z.enum(['permanent', 'stable', 'active', 'session', 'checkpoint']).optional(),
+  category:         z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation', 'convention', 'checkpoint']).optional(),
+  importance:       z.enum(['low', 'normal', 'high']).optional(),
 })
 
 export const rememberRoute = new Hono()
@@ -40,6 +42,8 @@ rememberRoute.post('/', zValidator('json', schema), async (c) => {
     predicate:       body.predicate ?? null,
     objectVal:       body.object_val ?? null,
     durabilityClass: body.durability_class ?? 'active',
+    category:        body.category ?? 'observation',
+    importance:      body.importance ?? 'normal',
     palaceId:        palace.id,
   }).returning()
 
