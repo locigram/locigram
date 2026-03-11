@@ -6,7 +6,7 @@
 import { eq, and, inArray, isNull, desc, sql } from 'drizzle-orm'
 import { locigrams, retrievalEvents } from '@locigram/db'
 import { searchFTS, type FTSOptions } from './fts'
-import { applyLengthNormalization, applyTimeDecay, applyMMRDiversity } from './scoring'
+import { applyLengthNormalization, applyTimeDecay, applyStructuredBoost, applyMMRDiversity } from './scoring'
 
 export interface HybridRecallOptions {
   query: string
@@ -178,6 +178,7 @@ export async function hybridRecall(
   // Post-scoring pipeline
   results = applyLengthNormalization(results as any, parseInt(process.env.LOCIGRAM_LENGTH_NORM_ANCHOR ?? '500')) as any
   results = applyTimeDecay(results as any, parseInt(process.env.LOCIGRAM_QUERY_TIME_DECAY_HALFLIFE ?? '60')) as any
+  results = applyStructuredBoost(results as any) as any
   results = applyMMRDiversity(results as any, parseFloat(process.env.LOCIGRAM_MMR_THRESHOLD ?? '0.85')) as any
 
   // Apply min score filter

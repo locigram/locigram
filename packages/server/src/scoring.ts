@@ -41,7 +41,7 @@ function wordTrigrams(text: string): Set<string> {
 }
 
 function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 && b.size === 0) return 1
+  // Both empty = not comparable (prevents false-positive MMR penalties on short text)
   if (a.size === 0 || b.size === 0) return 0
   let intersection = 0
   for (const item of a) {
@@ -49,6 +49,59 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   }
   const union = a.size + b.size - intersection
   return union === 0 ? 0 : intersection / union
+}
+
+/**
+ * Boost structured memories (those with SPO triples and high-value categories).
+ * Decisions/conventions/preferences with SPO should rank above raw transcripts.
+ */
+export function applyStructuredBoost(
+  results: ScoredResult[],
+  spoBoost: number = 1.3,
+  categoryBoost: Record<string, number> = {
+    decision: 1.4,
+    convention: 1.35,
+    preference: 1.3,
+    lesson: 1.25,
+    checkpoint: 1.2,
+    entity: 1.1,
+    fact: 1.05,
+    observation: 1.0,
+  },
+  durabilityBoost: Record<string, number> = {
+    permanent: 1.15,
+    stable: 1.1,
+    active: 1.0,
+    session: 0.9,
+    checkpoint: 1.05,
+  },
+  importanceBoost: Record<string, number> = {
+    high: 1.2,
+    normal: 1.0,
+    low: 0.85,
+  },
+): ScoredResult[] {
+  return results.map(r => {
+    let boost = 1.0
+
+    // SPO boost: has subject AND predicate
+    const hasSPO = !!(r as any).subject && !!(r as any).predicate
+    if (hasSPO) boost *= spoBoost
+
+    // Category boost
+    const cat = (r as any).category as string
+    if (cat && categoryBoost[cat]) boost *= categoryBoost[cat]
+
+    // Durability boost
+    const dur = (r as any).durabilityClass as string
+    if (dur && durabilityBoost[dur]) boost *= durabilityBoost[dur]
+
+    // Importance boost
+    const imp = (r as any).importance as string
+    if (imp && importanceBoost[imp]) boost *= importanceBoost[imp]
+
+    return { ...r, _score: r._score * boost }
+  })
 }
 
 export function applyMMRDiversity(

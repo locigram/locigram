@@ -5,6 +5,7 @@ import type { PipelineConfig } from './config'
 import { extractFromRaw } from './extract'
 import { resolveEntities } from './resolve'
 import { isDuplicate } from './dedup'
+import { qualityGate } from './noise-filter'
 
 export interface IngestResult {
   stored:  number
@@ -60,6 +61,9 @@ export async function ingest(
             }],
           }
         : await extractFromRaw(raw, config)
+
+      // 2b. Post-extraction quality gate — demote operational noise mis-classified as decisions
+      extraction.locigrams = qualityGate(extraction.locigrams as any) as any
 
       // 3. Resolve entities (match or create in DB)
       const resolvedEntities = await resolveEntities(db, config.palaceId, extraction.entities)
