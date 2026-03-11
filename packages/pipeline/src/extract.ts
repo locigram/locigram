@@ -38,7 +38,11 @@ const ExtractionSchema = z.object({
   locigrams: z.array(z.object({
     content:    z.string(),
     confidence: z.number().min(0).max(1),
-    category:   z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation']).default('observation'),
+    category:   z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation', 'convention', 'checkpoint']).default('observation'),
+    subject:         z.string().nullable().default(null),
+    predicate:       z.string().nullable().default(null),
+    object_val:      z.string().nullable().default(null),
+    durability_class: z.enum(['permanent', 'stable', 'active', 'session', 'checkpoint']).default('active'),
   })),
 })
 
@@ -57,7 +61,7 @@ Schema:
   "locus": string,
   "is_reference": boolean,
   "reference_type": "network_device"|"software"|"configuration"|"service_account"|"contract"|"contact"|null,
-  "locigrams": [{ "content": string, "confidence": number, "category": "decision"|"preference"|"fact"|"lesson"|"entity"|"observation" }]
+  "locigrams": [{ "content": string, "confidence": number, "category": "decision"|"preference"|"fact"|"lesson"|"entity"|"observation"|"convention"|"checkpoint", "subject": string|null, "predicate": string|null, "object_val": string|null, "durability_class": "permanent"|"stable"|"active"|"session"|"checkpoint" }]
 }
 
 Rules:
@@ -80,6 +84,23 @@ Rules:
     lesson = learned from experience ("we learned", "next time", "mistake was", "note to self")
     entity = pure entity knowledge (who someone is, what an org does, product descriptions)
     observation = default — events, conversations, general notes, anything that doesn't fit above
+    convention = team/project conventions, coding standards, workflow agreements
+    checkpoint = pre-compaction state saves, session snapshots
+- subject/predicate/object_val: extract structured SPO triples when the content describes a fact about a named entity.
+    subject = the entity being described (person name, hostname, service name, project name)
+    predicate = the attribute or relationship (ip, role, birthday, port, model, prefers, decided)
+    object_val = the value ("10.10.100.20", "CFO", "June 3rd", "8000", "Qwen3.5-35B", "dark mode")
+    Set all three to null if the content is a narrative/event without a clear entity-attribute-value structure.
+    Examples:
+      "surugpu runs at 10.10.100.20" → subject="surugpu", predicate="ip", object_val="10.10.100.20"
+      "Andrew prefers Opus for design work" → subject="Andrew", predicate="prefers_model", object_val="Opus"
+      "We had a good meeting today" → subject=null, predicate=null, object_val=null
+- durability_class: classify how long this memory should persist:
+    permanent = identity facts, names, relationships, reference data (never expires)
+    stable = decisions, preferences, architecture facts (long-lived, months+)
+    active = events, observations, conversations (default — decays over weeks)
+    session = context only meaningful within current session (hours)
+    checkpoint = pre-compaction state saves (auto-expires in 4h)
 - If pre-extracted entities are provided below, use them as your starting point. Add aliases or additional entities you find, but do NOT remove or rename provided entities.`
 
 function buildUserMessage(content: string, preEntities: Array<{name: string; type: string}> | null, noThink: boolean): string {
@@ -102,7 +123,7 @@ function fallback(raw: RawMemory, isReference = false): ExtractionResult {
     reference_type: null,
     isReference,
     referenceType: null,
-    locigrams:     [{ content: raw.content, confidence: 0.5, category: 'observation' as const }],
+    locigrams:     [{ content: raw.content, confidence: 0.5, category: 'observation' as const, subject: null, predicate: null, object_val: null, durability_class: 'active' as const }],
   }
 }
 

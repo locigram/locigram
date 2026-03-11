@@ -27,7 +27,7 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
       schema: z.object({
         query:    z.string().describe('What to search for'),
         locus:    z.string().optional().describe('Namespace filter e.g. people/, business/, project/locigram'),
-        category: z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation']).optional().describe('Filter by memory category'),
+        category: z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation', 'convention', 'checkpoint']).optional().describe('Filter by memory category'),
         limit:    z.number().int().min(1).max(20).default(10).describe('Max results'),
       }),
       handler: async ({ query, locus, category, limit }: { query: string; locus?: string; category?: string; limit: number }) => {
@@ -59,8 +59,12 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
         service:    z.enum(['claude', 'chatgpt', 'gemini', 'perplexity', 'copilot', 'grok', 'mistral', 'llama', 'other']).optional().describe('The LLM service this memory originates from. When provided with sourceType=llm-session, auto-scopes locus to sessions/<service> unless locus is explicitly set by caller.'),
         connector:  z.string().optional().describe('Internal sync connector name (e.g. obsidian-sync, secondbrain-sync). When provided with sourceType=sync, auto-scopes locus to connectors/<connector> unless locus is explicitly set by caller.'),
         source_ref: z.string().optional().describe('Unique source reference for upsert deduplication (e.g. obsidian:Infrastructure/MCP-Servers.md, surudb:client:7).'),
+        subject:         z.string().optional().describe('Entity this fact is about'),
+        predicate:       z.string().optional().describe('Attribute or relationship'),
+        object_val:      z.string().optional().describe('The value'),
+        durability_class: z.enum(['permanent', 'stable', 'active', 'session', 'checkpoint']).optional().describe('How long this memory should persist'),
       }),
-      handler: async ({ content, locus, entities: ents, sourceType, service: modelService, connector: connectorName, source_ref: sourceRef }: any) => {
+      handler: async ({ content, locus, entities: ents, sourceType, service: modelService, connector: connectorName, source_ref: sourceRef, subject, predicate, object_val, durability_class }: any) => {
         // oauthService (from verified auth) takes precedence over model-provided service
         const service = oauthService ?? modelService ?? null
 
@@ -80,7 +84,14 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
 
           if (existing) {
             const [updated] = await db.update(locigrams)
-              .set({ content, locus: resolvedLocus, entities: ents, sourceType, metadata: { service: service ?? null, connector: connectorName ?? null } })
+              .set({
+                content, locus: resolvedLocus, entities: ents, sourceType,
+                metadata: { service: service ?? null, connector: connectorName ?? null },
+                subject: subject ?? null,
+                predicate: predicate ?? null,
+                objectVal: object_val ?? null,
+                durabilityClass: durability_class ?? 'active',
+              })
               .where(eq(locigrams.id, existing.id))
               .returning()
 
@@ -94,6 +105,9 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
               entities: ents,
               confidence: 1.0,
               category: 'observation',
+              subject: subject ?? null,
+              predicate: predicate ?? null,
+              durability_class: durability_class ?? 'active',
               created_at: updated.createdAt.toISOString(),
             })
             return { id: updated.id, status: 'updated' }
@@ -104,6 +118,10 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           content, locus: resolvedLocus, entities: ents, sourceType, confidence: 1.0,
           metadata: { service: service ?? null, connector: connectorName ?? null },
           ...(sourceRef ? { sourceRef } : {}),
+          subject: subject ?? null,
+          predicate: predicate ?? null,
+          objectVal: object_val ?? null,
+          durabilityClass: durability_class ?? 'active',
           palaceId,
         }).returning()
 
@@ -117,6 +135,9 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           entities: ents,
           confidence: 1.0,
           category: 'observation',
+          subject: subject ?? null,
+          predicate: predicate ?? null,
+          durability_class: durability_class ?? 'active',
           created_at: loc.createdAt.toISOString(),
         })
 
@@ -442,6 +463,7 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
         await db.update(locigrams)
           .set({
             expiresAt: sql`NOW()`,
+            supersededBy: corrected.id,
             metadata: sql`${locigrams.metadata} || ${JSON.stringify({ superseded_by: corrected.id })}::jsonb`,
           })
           .where(and(eq(locigrams.id, oldId), eq(locigrams.palaceId, palaceId)))
@@ -463,6 +485,38 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           .where(eq(locigrams.id, corrected.id))
 
         return { newId: corrected.id, supersededId: oldId, status: 'corrected' }
+      },
+    },
+
+    structured_recall: {
+      description: 'Query structured facts by subject and/or predicate. Use for precise lookups like "what is surugpu\'s IP?" or "show all decisions".',
+      schema: z.object({
+        subject:         z.string().optional().describe('Entity to look up'),
+        predicate:       z.string().optional().describe('Attribute to filter on'),
+        category:        z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation', 'convention', 'checkpoint']).optional(),
+        durability_class: z.enum(['permanent', 'stable', 'active', 'session', 'checkpoint']).optional(),
+        limit:           z.number().int().min(1).max(50).default(20),
+      }),
+      handler: async ({ subject, predicate, category, durability_class, limit }: { subject?: string; predicate?: string; category?: string; durability_class?: string; limit: number }) => {
+        if (!subject && !predicate && !category && !durability_class) {
+          return { error: 'Specify at least one of: subject, predicate, category, durability_class' }
+        }
+
+        const conditions = [
+          eq(locigrams.palaceId, palaceId),
+          isNull(locigrams.expiresAt),
+        ]
+        if (subject) conditions.push(eq(locigrams.subject, subject))
+        if (predicate) conditions.push(eq(locigrams.predicate, predicate))
+        if (category) conditions.push(eq(locigrams.category, category))
+        if (durability_class) conditions.push(eq(locigrams.durabilityClass, durability_class))
+
+        const results = await db.select().from(locigrams)
+          .where(and(...conditions))
+          .orderBy(desc(locigrams.createdAt))
+          .limit(limit)
+
+        return { results, total: results.length }
       },
     },
 
