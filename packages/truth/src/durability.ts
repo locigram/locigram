@@ -31,14 +31,20 @@ interface TTLConfig {
   promotionMinAgeDays: number
 }
 
+function safeInt(val: string | undefined, fallback: number): number {
+  if (!val) return fallback
+  const n = parseInt(val, 10)
+  return Number.isNaN(n) ? fallback : n
+}
+
 function loadConfig(): TTLConfig {
   return {
-    sessionHours:       parseInt(process.env.LOCIGRAM_TTL_SESSION_HOURS ?? '24'),
-    checkpointHours:    parseInt(process.env.LOCIGRAM_TTL_CHECKPOINT_HOURS ?? '72'),
-    activeDays:         parseInt(process.env.LOCIGRAM_TTL_ACTIVE_DAYS ?? '21'),
-    stableDays:         parseInt(process.env.LOCIGRAM_TTL_STABLE_DAYS ?? '180'),
-    promotionMinAccess: parseInt(process.env.LOCIGRAM_PROMOTION_MIN_ACCESS ?? '5'),
-    promotionMinAgeDays: parseInt(process.env.LOCIGRAM_PROMOTION_MIN_AGE_DAYS ?? '14'),
+    sessionHours:       safeInt(process.env.LOCIGRAM_TTL_SESSION_HOURS, 24),
+    checkpointHours:    safeInt(process.env.LOCIGRAM_TTL_CHECKPOINT_HOURS, 72),
+    activeDays:         safeInt(process.env.LOCIGRAM_TTL_ACTIVE_DAYS, 21),
+    stableDays:         safeInt(process.env.LOCIGRAM_TTL_STABLE_DAYS, 180),
+    promotionMinAccess: safeInt(process.env.LOCIGRAM_PROMOTION_MIN_ACCESS, 5),
+    promotionMinAgeDays: safeInt(process.env.LOCIGRAM_PROMOTION_MIN_AGE_DAYS, 14),
   }
 }
 

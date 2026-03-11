@@ -375,8 +375,9 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
         new_id: z.string().uuid().describe('UUID of the memory that replaces it'),
       }),
       handler: async ({ old_id, new_id }: { old_id: string; new_id: string }) => {
+        if (old_id === new_id) return { error: 'Cannot supersede a memory with itself' }
         // Verify both exist and belong to this palace
-        const [oldMem] = await db.select({ id: locigrams.id }).from(locigrams)
+        const [oldMem] = await db.select({ id: locigrams.id, supersededBy: locigrams.supersededBy }).from(locigrams)
           .where(and(eq(locigrams.id, old_id), eq(locigrams.palaceId, palaceId)))
           .limit(1)
         const [newMem] = await db.select({ id: locigrams.id }).from(locigrams)
@@ -384,6 +385,7 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
           .limit(1)
 
         if (!oldMem) return { error: `Old memory ${old_id} not found` }
+        if (oldMem.supersededBy) return { error: `Old memory ${old_id} already superseded by ${oldMem.supersededBy}` }
         if (!newMem) return { error: `New memory ${new_id} not found` }
 
         const [updated] = await db.update(locigrams)
