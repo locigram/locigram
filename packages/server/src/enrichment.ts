@@ -168,7 +168,7 @@ export async function enrichFromSource(
   const extraction = await extractFromRaw(
     {
       content: fullMaterial,
-      sourceType: 'enrichment' as any,
+      sourceType: 'enrichment',
       metadata: { sourceRef: resolution.sourceRef, platform: resolution.platform },
     },
     pipelineConfig,
@@ -193,6 +193,9 @@ export async function enrichFromSource(
       result.skippedReasons.push(`No structured fields: ${fact.content.slice(0, 50)}`)
       continue
     }
+
+    // Cache for object_val embedding (reused in dedup + ingest)
+    let cachedObjectValVec: number[] | null = null
 
     // Per-fact sensitivity check
     const factText = `${fact.content} ${fact.object_val ?? ''}`
@@ -221,13 +224,16 @@ export async function enrichFromSource(
       if (existing.length > 0) {
         if (fact.object_val) {
           // Tier 2: fuzzy dedup on object_val via embedding cosine similarity
+          // Cache the new embedding — reuse for ingest if not a duplicate
           let isDuplicate = false
-          const newVec = await vectorOps.embed(fact.object_val)
+          if (!cachedObjectValVec) {
+            cachedObjectValVec = await vectorOps.embed(fact.object_val)
+          }
 
           for (const ex of existing) {
             if (ex.objectVal) {
               const exVec = await vectorOps.embed(ex.objectVal)
-              if (cosineSimilarity(newVec, exVec) > 0.9) {
+              if (cosineSimilarity(cachedObjectValVec, exVec) > 0.9) {
                 isDuplicate = true
                 break
               }

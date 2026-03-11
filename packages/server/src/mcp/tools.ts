@@ -627,11 +627,11 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
         let enrichment = undefined
         if (enrich && resolution.resolved) {
           try {
-            const { defaultPipelineConfig } = await import('@locigram/pipeline')
-            const pipelineConf = { ...defaultPipelineConfig(), palaceId: palace.id }
+            const { defaultLLMConfig } = await import('@locigram/pipeline')
+            const pipelineConf = { llm: defaultLLMConfig(), palaceId: palace.id }
 
             enrichment = await enrichFromSource(
-              resolution, db, palace.id, pipelineConf as any,
+              resolution, db, palace.id, pipelineConf,
               { embed: vector.embed, upsert: vector.upsert },
               collection,
               enrichConfig ?? DEFAULT_ENRICHMENT_CONFIG,

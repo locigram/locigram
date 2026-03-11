@@ -37,6 +37,7 @@ export type SourceType =
   | 'manual'         // manually pushed via webhook
   | 'webhook'        // raw webhook push (sourceType not specified)
   | 'system'         // system-generated (e.g. truth engine, bootstrap)
+  | 'enrichment'     // extracted from source material via enrichment loop
 
 // ── Core Memory Types ─────────────────────────────────────────────────────────
 
