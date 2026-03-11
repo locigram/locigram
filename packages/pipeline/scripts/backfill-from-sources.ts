@@ -37,7 +37,7 @@ interface StructuredFact {
 function extractArchitectureDecisions(content: string, filePath: string): StructuredFact[] {
   const facts: StructuredFact[] = []
   // Match ## YYYY-MM-DD: Title blocks
-  const sectionRegex = /^## (\d{4}-\d{2}-\d{2}): (.+)\n([\s\S]+?)(?=^## |\Z)/gm
+  const sectionRegex = /^## (\d{4}-\d{2}-\d{2}): (.+)\n([\s\S]+?)(?=^## |$(?![\s\S]))/gm
   let match
   while ((match = sectionRegex.exec(content)) !== null) {
     const [, date, title, body] = match
@@ -244,10 +244,11 @@ async function main() {
             })
           }
 
-          // Architecture facts: "runs on", "deployed at", "serves", "hosts"
-          if (/^\|\s*\S+\s*\|\s*`?\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`?\s*\|/.test(line)) {
+          // Architecture facts: table rows with IP addresses (skip headers/separators)
+          if (/^\|\s*[^-|]+\s*\|\s*`?\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`?\s*\|/.test(line)) {
             const cells = line.split('|').map(c => c.trim()).filter(Boolean)
-            if (cells.length >= 3) {
+            // Skip header rows and separator rows
+            if (cells.length >= 3 && !cells[0].startsWith('---') && !/^(Host|Device|Name|Server)\b/i.test(cells[0])) {
               const [host, ip, role] = cells
               allFacts.push({
                 content: `${host} (${ip}) — ${role}`,

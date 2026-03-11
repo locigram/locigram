@@ -41,18 +41,37 @@ rememberRoute.post('/', zValidator('json', schema), async (c) => {
       const [updated] = await db.update(locigrams)
         .set({
           content:         body.content,
+          sourceType:      body.sourceType,
           locus:           body.locus,
           entities:        body.entities,
+          confidence:      body.confidence,
           subject:         body.subject ?? null,
           predicate:       body.predicate ?? null,
           objectVal:       body.object_val ?? null,
           durabilityClass: body.durability_class ?? existing.durabilityClass,
           category:        body.category ?? existing.category,
           importance:      body.importance ?? existing.importance,
-          expiresAt:       null,  // un-expire if re-pushed
+          // Only un-expire if the record was expired by lifecycle sweep (not manual)
+          // Manual expiry sets metadata.expired_by = 'manual'; sweep doesn't
+          ...(existing.expiresAt && !(existing.metadata as any)?.expired_by
+            ? { expiresAt: null }
+            : {}),
         })
         .where(eq(locigrams.id, existing.id))
         .returning()
+
+      // Update provenance (best-effort — sources table has no unique constraint)
+      if (body.connector || body.sourceRef) {
+        try {
+          await db.insert(sources).values({
+            locigramId: updated.id,
+            connector:  body.connector ?? 'manual',
+            rawRef:     body.sourceRef,
+            rawUrl:     body.rawUrl,
+            palaceId:   palace.id,
+          })
+        } catch { /* duplicate provenance is fine */ }
+      }
 
       return c.json({ id: updated.id, status: 'updated' }, 200)
     }
