@@ -63,7 +63,10 @@ export async function ingest(
         : await extractFromRaw(raw, config)
 
       // 2b. Post-extraction quality gate — demote operational noise mis-classified as decisions
-      extraction.locigrams = qualityGate(extraction.locigrams as any) as any
+      // Only apply to LLM-extracted results, not pre-classified connector data
+      if (!raw.preClassified) {
+        extraction.locigrams = qualityGate(extraction.locigrams as any) as any
+      }
 
       // 3. Resolve entities (match or create in DB)
       const resolvedEntities = await resolveEntities(db, config.palaceId, extraction.entities)

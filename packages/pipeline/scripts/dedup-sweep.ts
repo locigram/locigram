@@ -37,10 +37,19 @@ async function main() {
 
   // ── Tier 1: Exact SPO match ──
   // Find groups with same (subject, predicate) that have >1 active record
+  // Prefer: highest confidence → has SPO object_val → newest
   const dupeGroups = await sql`
     SELECT subject, predicate, COUNT(*) as cnt,
-           array_agg(id ORDER BY created_at DESC) as ids,
-           array_agg(LEFT(content, 80) ORDER BY created_at DESC) as snippets
+           array_agg(id ORDER BY
+             confidence DESC NULLS LAST,
+             (CASE WHEN object_val IS NOT NULL THEN 0 ELSE 1 END),
+             created_at DESC
+           ) as ids,
+           array_agg(LEFT(content, 80) ORDER BY
+             confidence DESC NULLS LAST,
+             (CASE WHEN object_val IS NOT NULL THEN 0 ELSE 1 END),
+             created_at DESC
+           ) as snippets
     FROM locigrams
     WHERE expires_at IS NULL AND subject IS NOT NULL AND predicate IS NOT NULL
     GROUP BY subject, predicate
@@ -92,6 +101,8 @@ async function main() {
       if (expired.has(rows[i].id as string)) continue
       for (let j = i + 1; j < rows.length; j++) {
         if (expired.has(rows[j].id as string)) continue
+        // Must share the same subject to be considered duplicates (prevents cross-project expiry)
+        if (rows[i].subject !== rows[j].subject) continue
         const sim = jaccard(trigrams[i], trigrams[j])
         if (sim > 0.85) {
           // Expire the older one (j, since sorted newest first)
