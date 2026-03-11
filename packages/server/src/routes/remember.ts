@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
+import { eq, and } from 'drizzle-orm'
 import { locigrams, sources } from '@locigram/db'
 
 
@@ -29,6 +30,33 @@ rememberRoute.post('/', zValidator('json', schema), async (c) => {
   const db = c.get('db')
   const palace = c.get('palace')
   const body = c.req.valid('json')
+
+  // Upsert by sourceRef if provided (update existing rather than insert duplicate)
+  if (body.sourceRef) {
+    const [existing] = await db.select().from(locigrams)
+      .where(and(eq(locigrams.palaceId, palace.id), eq(locigrams.sourceRef, body.sourceRef)))
+      .limit(1)
+
+    if (existing) {
+      const [updated] = await db.update(locigrams)
+        .set({
+          content:         body.content,
+          locus:           body.locus,
+          entities:        body.entities,
+          subject:         body.subject ?? null,
+          predicate:       body.predicate ?? null,
+          objectVal:       body.object_val ?? null,
+          durabilityClass: body.durability_class ?? existing.durabilityClass,
+          category:        body.category ?? existing.category,
+          importance:      body.importance ?? existing.importance,
+          expiresAt:       null,  // un-expire if re-pushed
+        })
+        .where(eq(locigrams.id, existing.id))
+        .returning()
+
+      return c.json({ id: updated.id, status: 'updated' }, 200)
+    }
+  }
 
   const [locigram] = await db.insert(locigrams).values({
     content:         body.content,

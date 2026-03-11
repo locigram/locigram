@@ -111,8 +111,8 @@ async function pushFact(fact: StructuredFact): Promise<boolean> {
   const body = {
     content: fact.content,
     locus: fact.locus,
-    sourceType: 'sync',
-    source_ref: fact.source_ref,
+    sourceType: 'system',
+    sourceRef: fact.source_ref,
     subject: fact.subject,
     predicate: fact.predicate,
     object_val: fact.object_val,
@@ -133,6 +133,8 @@ async function pushFact(fact: StructuredFact): Promise<boolean> {
 
   if (!res.ok) {
     const err = await res.text().catch(() => '')
+    // Treat duplicate source_ref as success (already exists)
+    if (res.status === 500 && err.includes('duplicate key')) return true
     console.warn(`[backfill] push failed (${res.status}): ${err.slice(0, 100)}`)
     return false
   }
@@ -171,6 +173,99 @@ async function main() {
       allFacts.push(...facts)
     } catch (e: any) {
       console.warn(`[backfill] Could not read ${fname}: ${e.message}`)
+    }
+  }
+
+  // 3. Obsidian project docs — decisions log tables and decision sections
+  const obsidianDirs = [
+    '/home/sudobot/vault/sudobrain/Projects',
+    '/home/sudobot/vault/sudobrain/Infrastructure',
+    '/home/sudobot/vault/sudobrain/Decisions',
+  ]
+
+  for (const dir of obsidianDirs) {
+    let files: string[]
+    try {
+      files = readdirSync(dir).filter((f: string) => f.endsWith('.md') && !f.startsWith('_'))
+    } catch { continue }
+
+    for (const fname of files) {
+      try {
+        const content = await Bun.file(`${dir}/${fname}`).text()
+        const relPath = `${dir.split('sudobrain/')[1]}/${fname}`
+
+        // Skip the Architecture Log — already handled above
+        if (relPath === 'Decisions/Architecture Log.md') continue
+
+        const lines = content.split('\n')
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim()
+
+          // Decisions log table rows: | date | decision | rationale |
+          if (/^\|\s*\d{4}-\d{2}-\d{2}\s*\|/.test(line)) {
+            const cells = line.split('|').map(c => c.trim()).filter(Boolean)
+            if (cells.length >= 2) {
+              const [date, decision, rationale] = cells
+              if (decision && decision.length > 15 && !decision.startsWith('---') && !decision.toLowerCase().startsWith('decision')) {
+                allFacts.push({
+                  content: `[${date}] ${decision}${rationale ? ' — ' + rationale : ''}`,
+                  subject: relPath.replace(/\.md$/, '').replace(/\//g, '_').toLowerCase().slice(0, 60),
+                  predicate: 'decided',
+                  object_val: decision.slice(0, 200),
+                  category: 'decision',
+                  durability_class: 'permanent',
+                  locus: `decisions/${relPath.split('/')[0].toLowerCase()}`,
+                  source_ref: `obsidian:${relPath}:${i + 1}`,
+                  importance: 'high',
+                })
+              }
+            }
+          }
+
+          // Decision headings or bold decision lines
+          if (/^(?:#{1,4}\s+)?(?:\*\*)?Decision[:\s]/i.test(line) && line.length > 30) {
+            const text = line.replace(/^(?:#{1,4}\s+)?(?:\*\*)?Decision[:\s]*(?:\*\*)?/i, '').trim()
+            if (text.length < 15) continue
+            // Grab the next line for context if it starts with Why/Reason
+            let reason = ''
+            if (i + 1 < lines.length && /^\*\*(?:Why|Reason)[:\s]/i.test(lines[i + 1].trim())) {
+              reason = lines[i + 1].trim().replace(/^\*\*(?:Why|Reason)[:\s]*\*\*\s*/i, '')
+            }
+            allFacts.push({
+              content: `Decision: ${text}${reason ? ' Reason: ' + reason : ''}`,
+              subject: relPath.replace(/\.md$/, '').replace(/\//g, '_').toLowerCase().slice(0, 60),
+              predicate: 'decided',
+              object_val: text.slice(0, 200),
+              category: 'decision',
+              durability_class: 'permanent',
+              locus: `decisions/${relPath.split('/')[0].toLowerCase()}`,
+              source_ref: `obsidian:${relPath}:${i + 1}`,
+              importance: 'high',
+            })
+          }
+
+          // Architecture facts: "runs on", "deployed at", "serves", "hosts"
+          if (/^\|\s*\S+\s*\|\s*`?\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`?\s*\|/.test(line)) {
+            const cells = line.split('|').map(c => c.trim()).filter(Boolean)
+            if (cells.length >= 3) {
+              const [host, ip, role] = cells
+              allFacts.push({
+                content: `${host} (${ip}) — ${role}`,
+                subject: host.replace(/`/g, '').trim().toLowerCase(),
+                predicate: 'has_role',
+                object_val: `${ip} — ${role}`.slice(0, 200),
+                category: 'fact',
+                durability_class: 'stable',
+                locus: `infrastructure/${relPath.split('/')[0].toLowerCase()}`,
+                source_ref: `obsidian:${relPath}:${i + 1}`,
+                importance: 'normal',
+              })
+            }
+          }
+        }
+      } catch (e: any) {
+        // Skip unreadable files
+      }
     }
   }
 
