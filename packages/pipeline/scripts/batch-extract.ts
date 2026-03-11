@@ -113,6 +113,9 @@ while (true) {
   ]
   if (lastId) conditions.push(gt(locigrams.id, lastId))
 
+  // Cap batch size to remaining limit
+  const fetchSize = LIMIT > 0 ? Math.min(BATCH_SIZE, LIMIT - totalProcessed) : BATCH_SIZE
+
   const batch = await db.select({
     id:         locigrams.id,
     content:    locigrams.content,
@@ -126,7 +129,7 @@ while (true) {
     .from(locigrams)
     .where(and(...conditions))
     .orderBy(locigrams.id)
-    .limit(BATCH_SIZE)
+    .limit(fetchSize)
 
   if (batch.length === 0) break
   batchNum++
@@ -185,10 +188,11 @@ while (true) {
         totalProcessed++
         console.error(`[batch] error on ${record.id.slice(0, 8)}: ${err.message}`)
 
-        // Backoff on rate limit
-        if (err.message?.includes('429') || err.message?.includes('rate')) {
-          console.log('[batch] rate limited — waiting 30s')
-          await new Promise(r => setTimeout(r, 30_000))
+        // Backoff on rate limit or gateway errors
+        if (err.message?.includes('429') || err.message?.includes('rate') || err.message?.includes('502') || err.message?.includes('503')) {
+          const wait = err.message?.includes('429') ? 30_000 : 10_000
+          console.log(`[batch] LLM unavailable — waiting ${wait / 1000}s`)
+          await new Promise(r => setTimeout(r, wait))
         }
       }
     }))

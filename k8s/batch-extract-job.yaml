@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: locigram-batch-extract
+  namespace: locigram-main
+spec:
+  ttlSecondsAfterFinished: 86400  # keep logs for 24h
+  template:
+    spec:
+      containers:
+      - name: batch-extract
+        image: ghcr.io/locigram/locigram:latest
+        imagePullPolicy: Always
+        command: ["/bin/sh", "-c", "bun run packages/pipeline/scripts/batch-extract.ts --concurrency 1"]
+        env:
+        - name: DATABASE_URL
+          value: "postgresql://locigram:$(POSTGRES_PASSWORD)@locigram-postgres:5432/locigram"
+        envFrom:
+        - configMapRef:
+            name: locigram-config
+        - secretRef:
+            name: locigram-secrets
+      imagePullSecrets:
+      - name: ghcr-pull-secret
+      restartPolicy: OnFailure
