@@ -294,6 +294,7 @@ const ingestSchema = z.object({
     importance:  z.enum(['low', 'normal', 'high']).optional(),
     metadata:    z.record(z.string(), z.unknown()).optional(),
     // Structured fields (Phase 2.6) — pass through to pipeline
+    category:         z.enum(['decision', 'preference', 'fact', 'lesson', 'entity', 'observation', 'convention', 'checkpoint']).optional(),
     subject:          z.string().optional(),
     predicate:        z.string().optional(),
     object_val:       z.string().optional(),
@@ -332,11 +333,12 @@ connectorsRoute.post('/:id/ingest', zValidator('json', ingestSchema), async (c) 
       ...(m.importance ? { importance: m.importance } : {}),
     },
     // Pass structured fields through if connector provides them
-    ...(m.subject || m.predicate || m.object_val || m.durability_class ? {
+    ...(m.subject || m.predicate || m.object_val || m.durability_class || m.category ? {
       preClassified: {
         locus:           m.locus ?? `connectors/${instance.connectorType}`,
         entities:        [],
         confidence:      1.0,
+        category:        m.category ?? undefined,
         subject:         m.subject ?? undefined,
         predicate:       m.predicate ?? undefined,
         objectVal:       m.object_val ?? undefined,

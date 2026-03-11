@@ -52,7 +52,7 @@ export async function ingest(
             locigrams:     [{
               content: raw.content,
               confidence: 1.0,
-              category: 'fact' as const,
+              category: (raw.preClassified.category ?? 'fact') as 'fact',
               subject: raw.preClassified.subject ?? null,
               predicate: raw.preClassified.predicate ?? null,
               object_val: raw.preClassified.objectVal ?? null,

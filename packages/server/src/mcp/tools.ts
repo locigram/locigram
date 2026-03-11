@@ -397,6 +397,125 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
       },
     },
 
+    memory_checkpoint: {
+      description: 'Create an explicit checkpoint — a snapshot of current session state for recovery after compaction. Checkpoints auto-expire after 72h via the durability lifecycle.',
+      schema: z.object({
+        snapshot: z.string().describe('Full session state snapshot text'),
+        label:    z.string().optional().describe('Label for the checkpoint (default: session_state)'),
+        locus:    z.string().optional().describe('Locus override (default: agent/main)'),
+      }),
+      handler: async ({ snapshot, label, locus: locusOverride }: { snapshot: string; label?: string; locus?: string }) => {
+        const resolvedLabel = label ?? 'session_state'
+        const resolvedLocus = locusOverride ?? 'agent/main'
+
+        const [loc] = await db.insert(locigrams).values({
+          content:         snapshot,
+          locus:           resolvedLocus,
+          category:        'checkpoint',
+          durabilityClass: 'checkpoint',
+          importance:      'high',
+          subject:         'checkpoint',
+          predicate:       resolvedLabel,
+          objectVal:       snapshot.slice(0, 200),
+          sourceType:      'system',
+          confidence:      1.0,
+          entities:        [],
+          palaceId,
+        }).returning()
+
+        // Embed for vector retrieval
+        const vec = await vector.embed(snapshot)
+        await vector.upsert(collection, loc.id, vec, {
+          palace_id:        palaceId,
+          locus:            resolvedLocus,
+          source_type:      'system',
+          category:         'checkpoint',
+          durability_class: 'checkpoint',
+          subject:          'checkpoint',
+          predicate:        resolvedLabel,
+          created_at:       loc.createdAt.toISOString(),
+        })
+
+        return { id: loc.id, label: resolvedLabel, created_at: loc.createdAt.toISOString() }
+      },
+    },
+
+    memory_recover: {
+      description: 'Tiered recovery after compaction or session start. Returns memories in priority order: checkpoints → decisions → conventions → high-importance → recent context. Use strategy to target a specific tier.',
+      schema: z.object({
+        locus:    z.string().optional().describe('Filter by locus prefix (e.g. agent/main)'),
+        strategy: z.enum(['auto', 'checkpoint', 'decisions', 'full']).default('auto').describe('Recovery strategy: auto (tiered), checkpoint (only checkpoints), decisions (only decisions+conventions), full (all tiers)'),
+      }),
+      handler: async ({ locus, strategy }: { locus?: string; strategy: string }) => {
+        const now = new Date()
+        const since72h = new Date(now.getTime() - 72 * 60 * 60 * 1000)
+        const since7d  = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+
+        const baseConds = [eq(locigrams.palaceId, palaceId), isNull(locigrams.expiresAt)]
+        if (locus) baseConds.push(like(locigrams.locus, `${locus}%`))
+
+        // Tier 1: Checkpoints (last 72h)
+        const checkpoints = (strategy === 'auto' || strategy === 'checkpoint' || strategy === 'full')
+          ? await db.select().from(locigrams)
+              .where(and(...baseConds, eq(locigrams.category, 'checkpoint'), eq(locigrams.durabilityClass, 'checkpoint'), gte(locigrams.createdAt, since72h)))
+              .orderBy(desc(locigrams.createdAt))
+              .limit(10)
+          : []
+
+        // Tier 2: Decisions (permanent/stable)
+        const decisions = (strategy === 'auto' || strategy === 'decisions' || strategy === 'full')
+          ? await db.select().from(locigrams)
+              .where(and(...baseConds, eq(locigrams.category, 'decision'), inArray(locigrams.durabilityClass, ['permanent', 'stable'])))
+              .orderBy(desc(locigrams.createdAt))
+              .limit(10)
+          : []
+
+        // Tier 3: Conventions (permanent)
+        const conventions = (strategy === 'auto' || strategy === 'decisions' || strategy === 'full')
+          ? await db.select().from(locigrams)
+              .where(and(...baseConds, eq(locigrams.category, 'convention'), eq(locigrams.durabilityClass, 'permanent')))
+              .orderBy(desc(locigrams.createdAt))
+              .limit(10)
+          : []
+
+        // Tier 4: High-importance active memories
+        const highImportance = (strategy === 'auto' || strategy === 'full')
+          ? await db.select().from(locigrams)
+              .where(and(...baseConds, eq(locigrams.importance, 'high'), inArray(locigrams.durabilityClass, ['active', 'stable', 'permanent'])))
+              .orderBy(desc(locigrams.createdAt))
+              .limit(10)
+          : []
+
+        // Tier 5: Recent active context (last 7 days, not session-durability)
+        const recentContext = (strategy === 'auto' || strategy === 'full')
+          ? await db.select().from(locigrams)
+              .where(and(...baseConds, gte(locigrams.createdAt, since7d), sql`${locigrams.durabilityClass} != 'session'`))
+              .orderBy(desc(locigrams.createdAt))
+              .limit(10)
+          : []
+
+        // Deduplicate and cap at 40
+        const seen = new Set<string>()
+        const all = [...checkpoints, ...decisions, ...conventions, ...highImportance, ...recentContext].filter(m => {
+          if (seen.has(m.id)) return false
+          seen.add(m.id)
+          return true
+        }).slice(0, 40)
+
+        return {
+          memories: all,
+          strategy,
+          tiers: {
+            checkpoints:    checkpoints.length,
+            decisions:      decisions.length,
+            conventions:    conventions.length,
+            highImportance: highImportance.length,
+            recentContext:  recentContext.length,
+          },
+        }
+      },
+    },
+
     durability_sweep: {
       description: 'Run the durability lifecycle sweep manually. Expires stale memories, supersedes duplicates, promotes active → stable. Normally runs on a cron schedule.',
       schema: z.object({}),
@@ -485,9 +604,24 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
             .limit(10)
         }
 
-        // Deduplicate by id before returning
+        // Fetch recent checkpoints (last 72h, not expired) — highest recovery priority
+        const since72h = new Date(Date.now() - 72 * 60 * 60 * 1000)
+        const checkpointConds = [
+          eq(locigrams.palaceId, palaceId),
+          eq(locigrams.category, 'checkpoint'),
+          eq(locigrams.durabilityClass, 'checkpoint'),
+          isNull(locigrams.expiresAt),
+          gte(locigrams.createdAt, since72h),
+        ]
+        if (locus) checkpointConds.push(like(locigrams.locus, `${locus}%`))
+        const checkpoints = await db.select().from(locigrams)
+          .where(and(...checkpointConds))
+          .orderBy(desc(locigrams.createdAt))
+          .limit(5)
+
+        // Deduplicate by id before returning — checkpoints first for recovery priority
         const seen = new Set<string>()
-        const allMemories = [...recentMemories, ...graphMemories, ...serviceMemories].filter(m => {
+        const allMemories = [...checkpoints, ...recentMemories, ...graphMemories, ...serviceMemories].filter(m => {
           if (seen.has(m.id)) return false
           seen.add(m.id)
           return true
@@ -495,9 +629,10 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
 
         return {
           recentMemories: allMemories,
+          checkpoints,
           truths: recentTruths,
           graphEnriched: graphMemories.length > 0,
-          summary: `Found ${recentMemories.length} recent memories${graphMemories.length > 0 ? ` + ${graphMemories.length} graph-connected` : ''}${serviceMemories.length > 0 ? ` + ${serviceMemories.length} from sessions/${service}` : ''} and ${recentTruths.length} truths from the last ${lookbackDays} days.`,
+          summary: `Found ${checkpoints.length} checkpoints + ${recentMemories.length} recent memories${graphMemories.length > 0 ? ` + ${graphMemories.length} graph-connected` : ''}${serviceMemories.length > 0 ? ` + ${serviceMemories.length} from sessions/${service}` : ''} and ${recentTruths.length} truths from the last ${lookbackDays} days.`,
         }
       },
     },

@@ -109,6 +109,56 @@ async function maybeReportSync(): Promise<void> {
   syncStats = { pushed: 0, skipped: 0, errors: 0, lastReportAt: Date.now() }
 }
 
+export async function pushCheckpoint(agentName: string, sessionId: string, summary: string, occurredAt?: Date, locus?: string): Promise<void> {
+  const resolvedLocus = locus ?? `agent/${agentName}/context`
+  const objectVal = summary.slice(0, 200)
+
+  if (useConnectorApi()) {
+    const url = `${config.locigramUrl}/api/connectors/${config.connectorInstanceId}/ingest`
+    const body = JSON.stringify({
+      memories: [{
+        content: summary,
+        sourceType: 'system',
+        sourceRef: `session:${agentName}/${sessionId}/checkpoint`,
+        occurredAt: (occurredAt ?? new Date()).toISOString(),
+        locus: resolvedLocus,
+        metadata: { agentName, sessionId, type: 'checkpoint' },
+        category: 'checkpoint',
+        durability_class: 'checkpoint',
+        importance: 'high',
+        subject: 'checkpoint',
+        predicate: 'session_state',
+        object_val: objectVal,
+      }],
+    })
+
+    const res = await httpPostJson(url, body, config.connectorToken)
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(`checkpoint ingest failed (${res.status}): ${res.body}`)
+    }
+  } else {
+    // Legacy path — POST to remember endpoint with structured fields
+    const url = `${config.locigramUrl}/api/remember`
+    const body = JSON.stringify({
+      content: summary,
+      locus: resolvedLocus,
+      sourceType: 'system',
+      source_ref: `session:${agentName}/${sessionId}/checkpoint`,
+      category: 'checkpoint',
+      durability_class: 'checkpoint',
+      importance: 'high',
+      subject: 'checkpoint',
+      predicate: 'session_state',
+      object_val: objectVal,
+    })
+
+    const res = await httpPostJson(url, body, config.apiToken)
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(`checkpoint push failed (${res.status}): ${res.body}`)
+    }
+  }
+}
+
 // Export for shutdown hook
 export async function flushSyncReport(): Promise<void> {
   if (!useConnectorApi()) return

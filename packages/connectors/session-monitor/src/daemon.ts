@@ -5,7 +5,7 @@ import http from 'node:http'
 import https from 'node:https'
 import { config } from './config'
 import { readDiscordHistory, resolveBotUserId } from './discord'
-import { pushToLocigram, flushSyncReport } from './ingest'
+import { pushToLocigram, pushCheckpoint, flushSyncReport } from './ingest'
 
 const LOG_PREFIX = '[session-monitor]'
 const SECTION_BREAK_EVERY_N = 15
@@ -647,6 +647,15 @@ async function triggerHandoffDump(triggerSizeMb: number, state: AgentWatcherStat
     log('handoff pushed to Locigram (session)', state.agentName)
   } catch (e: any) {
     warn(`Locigram push error (session): ${e.message}`, state.agentName)
+  }
+
+  // Create a checkpoint for compaction recovery
+  try {
+    const contextLocus = `agent/${state.agentName}/context`
+    await pushCheckpoint(state.agentName, state.currentSessionId, summary, now, contextLocus)
+    log('checkpoint created in Locigram', state.agentName)
+  } catch (e: any) {
+    warn(`Locigram checkpoint error: ${e.message}`, state.agentName)
   }
 
   // Push active context (structured JSON) under context locus

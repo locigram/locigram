@@ -107,6 +107,7 @@ export interface RawMemory {
     clientId?:          string
     clusterCandidate?:  boolean               // true → cluster worker groups related items
     // Structured fields (Phase 2.6) — connector-provided SPO triple + durability
+    category?:          string
     subject?:           string
     predicate?:         string
     objectVal?:         string
