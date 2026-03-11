@@ -74,7 +74,7 @@ export async function extractEntitiesWithGLiNER(text: string): Promise<GLiNERRes
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ text, entity_types: ENTITY_TYPES, threshold: 0.4 }),
-      signal:  AbortSignal.timeout(5_000), // 5s max — never block the pipeline
+      signal:  AbortSignal.timeout(10_000), // 10s max — GLiNER can be slow under load
     })
 
     if (!res.ok) {
