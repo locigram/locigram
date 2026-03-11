@@ -7,7 +7,7 @@ import { createVectorClient, ensureCollection, embed, searchSimilar } from '@loc
 import { startEmbedWorker, defaultPipelineConfig, runNoiseAssessment } from '@locigram/pipeline'
 import { startGraphWorker } from './graph/graph-worker'
 import type { PipelineConfig, LLMConfig } from '@locigram/pipeline'
-import { startTruthEngine, runSweep } from '@locigram/truth'
+import { startTruthEngine, runSweep, runDurabilityLifecycle } from '@locigram/truth'
 import { buildWebhookRoute } from '@locigram/connector-webhook'
 import { palaceMiddleware } from './middleware/palace'
 import { authMiddleware } from './middleware/auth'
@@ -118,6 +118,7 @@ export function createApp(config: AppConfig) {
     const sweepInterval = setInterval(async () => {
       try {
         await runSweep(db, config.palaceId)
+        await runDurabilityLifecycle(db, config.palaceId)
         await runNoiseAssessment(db, config.palaceId, pipelineConfig)
       } catch (err) {
         console.error('[scheduler] sweep failed:', err)

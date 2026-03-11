@@ -340,6 +340,71 @@ export function buildTools(db: DB, palace: Palace, vector: VectorOps, collection
       },
     },
 
+    memory_promote: {
+      description: 'Promote a memory to a higher durability class. Use when a fact has proven to be long-lasting or important.',
+      schema: z.object({
+        id:     z.string().uuid().describe('UUID of the locigram to promote'),
+        target: z.enum(['stable', 'permanent']).describe('Target durability class'),
+      }),
+      handler: async ({ id, target }: { id: string; target: string }) => {
+        const [existing] = await db.select({ durabilityClass: locigrams.durabilityClass })
+          .from(locigrams)
+          .where(and(eq(locigrams.id, id), eq(locigrams.palaceId, palaceId), isNull(locigrams.expiresAt)))
+          .limit(1)
+
+        if (!existing) return { error: 'not found or already expired' }
+
+        const hierarchy = ['session', 'checkpoint', 'active', 'stable', 'permanent']
+        const currentIdx = hierarchy.indexOf(existing.durabilityClass)
+        const targetIdx = hierarchy.indexOf(target)
+        if (targetIdx <= currentIdx) return { error: `Cannot promote: already ${existing.durabilityClass}` }
+
+        const [updated] = await db.update(locigrams)
+          .set({ durabilityClass: target })
+          .where(eq(locigrams.id, id))
+          .returning({ id: locigrams.id, durabilityClass: locigrams.durabilityClass })
+
+        return { id: updated.id, durabilityClass: updated.durabilityClass, status: 'promoted' }
+      },
+    },
+
+    memory_supersede: {
+      description: 'Mark a memory as superseded by a newer one. Use when a fact has been replaced (e.g. IP address changed, role changed).',
+      schema: z.object({
+        old_id: z.string().uuid().describe('UUID of the memory being superseded'),
+        new_id: z.string().uuid().describe('UUID of the memory that replaces it'),
+      }),
+      handler: async ({ old_id, new_id }: { old_id: string; new_id: string }) => {
+        // Verify both exist and belong to this palace
+        const [oldMem] = await db.select({ id: locigrams.id }).from(locigrams)
+          .where(and(eq(locigrams.id, old_id), eq(locigrams.palaceId, palaceId)))
+          .limit(1)
+        const [newMem] = await db.select({ id: locigrams.id }).from(locigrams)
+          .where(and(eq(locigrams.id, new_id), eq(locigrams.palaceId, palaceId)))
+          .limit(1)
+
+        if (!oldMem) return { error: `Old memory ${old_id} not found` }
+        if (!newMem) return { error: `New memory ${new_id} not found` }
+
+        const [updated] = await db.update(locigrams)
+          .set({ supersededBy: new_id, expiresAt: sql`NOW()` })
+          .where(eq(locigrams.id, old_id))
+          .returning({ id: locigrams.id })
+
+        return { id: updated.id, supersededBy: new_id, status: 'superseded' }
+      },
+    },
+
+    durability_sweep: {
+      description: 'Run the durability lifecycle sweep manually. Expires stale memories, supersedes duplicates, promotes active → stable. Normally runs on a cron schedule.',
+      schema: z.object({}),
+      handler: async () => {
+        const { runDurabilityLifecycle } = await import('@locigram/truth')
+        const result = await runDurabilityLifecycle(db, palaceId)
+        return result
+      },
+    },
+
     memory_session_start: {
       description: 'Called at session start or after compaction. Returns recent decisions, active context, and high-importance items. Pass locus for agent context (e.g. agent/main). Pass service to also include memories from sessions/<service> (for external LLM sessions like ChatGPT, Gemini, etc.).',
       schema: z.object({
