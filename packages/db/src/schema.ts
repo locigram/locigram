@@ -53,7 +53,7 @@ export const locigrams = pgTable(
     locus:       text('locus').notNull(),         // namespace: people/x, business/x, technical/x, project/x
     clientId:    text('client_id'),               // MSP client (first-class filter)
     importance:  text('importance').notNull().default('normal'), // low | normal | high
-    category:    text('category').notNull().default('observation'), // decision | preference | fact | lesson | entity | observation
+    category:    text('category').notNull().default('observation'), // decision | preference | fact | lesson | entity | observation | convention | checkpoint
 
     // Storage tier
     // hot  = recent + high confidence + is_reference → active in Qdrant
@@ -85,6 +85,15 @@ export const locigrams = pgTable(
     accessScore:      real('access_score').notNull().default(1.0),
     clusterCandidate: boolean('cluster_candidate').notNull().default(false),
 
+    // Structured recall (SPO triple)
+    subject:     text('subject'),                  // entity this fact is about
+    predicate:   text('predicate'),                // attribute/relationship
+    objectVal:   text('object_val'),               // the value
+
+    // Durability
+    durabilityClass: text('durability_class').notNull().default('active'), // permanent | stable | active | session | checkpoint
+    supersededBy:    uuid('superseded_by'),         // UUID of the locigram that replaced this one (no FK)
+
     palaceId:    palaceId(),
     connectorInstanceId: uuid('connector_instance_id').references(() => connectorInstances.id, { onDelete: 'set null' }),
   },
@@ -108,6 +117,12 @@ export const locigrams = pgTable(
     index('locigrams_occurred_at_idx').on(t.palaceId, t.occurredAt),
     index('locigrams_created_at_idx').on(t.palaceId, t.createdAt),
     index('locigrams_expires_at_idx').on(t.expiresAt),
+
+    // Structured recall indexes
+    index('locigrams_subject_idx').on(t.palaceId, t.subject),
+    index('locigrams_predicate_idx').on(t.palaceId, t.predicate),
+    index('locigrams_durability_class_idx').on(t.palaceId, t.durabilityClass),
+    index('locigrams_superseded_by_idx').on(t.supersededBy),
 
     // Pending embed (partial index declared in migrate.ts)
     // GIN indexes declared in migrate.ts (Drizzle doesn't support GIN natively)
@@ -359,3 +374,20 @@ export type ReferenceType = typeof REFERENCE_TYPES[number]
 
 export const TIERS = ['hot', 'warm', 'cold'] as const
 export type Tier = typeof TIERS[number]
+
+// ── Durability class constants ───────────────────────────────────────────────
+
+export const DURABILITY_CLASSES = ['permanent', 'stable', 'active', 'session', 'checkpoint'] as const
+export type DurabilityClass = typeof DURABILITY_CLASSES[number]
+
+export const CATEGORIES = [
+  'decision',
+  'preference',
+  'fact',
+  'lesson',
+  'entity',
+  'observation',
+  'convention',
+  'checkpoint',
+] as const
+export type Category = typeof CATEGORIES[number]
