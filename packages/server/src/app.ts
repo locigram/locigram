@@ -4,10 +4,11 @@ import { cors } from 'hono/cors'
 import { createDb, locigrams } from '@locigram/db'
 import { eq } from 'drizzle-orm'
 import { createVectorClient, ensureCollection, embed, searchSimilar } from '@locigram/vector'
-import { startEmbedWorker, defaultPipelineConfig, runNoiseAssessment } from '@locigram/pipeline'
+import { startEmbedWorker, defaultPipelineConfig } from '@locigram/pipeline'
 import { startGraphWorker } from './graph/graph-worker'
 import type { PipelineConfig, LLMConfig } from '@locigram/pipeline'
-import { startTruthEngine, runSweep, runDurabilityLifecycle } from '@locigram/truth'
+import { startTruthEngine } from '@locigram/truth'
+import { startMaintenance } from './maintenance'
 import { buildWebhookRoute } from '@locigram/connector-webhook'
 import { palaceMiddleware } from './middleware/palace'
 import { authMiddleware } from './middleware/auth'
@@ -101,31 +102,18 @@ export function createApp(config: AppConfig) {
   const stopWorker = startEmbedWorker(db, vectorClient, config.palaceId, 30_000)
   const stopGraphWorker = startGraphWorker(db, config.palaceId, 30_000)
 
-  // Start truth engine (every 6 hours)
+  // Start truth engine (reinforcement detection + promotion — every 6 hours)
   const stopTruth = startTruthEngine(db, {
     palaceId:   config.palaceId,
     intervalMs: 6 * 60 * 60 * 1000,
   })
 
-  // Start connector scheduler
+  // Start connector scheduler (cron-based per-connector sync)
   const scheduler = startScheduler({ db, palaceId: config.palaceId, pipelineConfig })
 
-  // Schedule nightly sweep (in-process fallback — K8s CronJob preferred)
-  // Only run in-process if LOCIGRAM_DISABLE_INPROCESS_SWEEP is not set
-  let stopSweep: (() => void) | undefined
-  if (!process.env.LOCIGRAM_DISABLE_INPROCESS_SWEEP) {
-    const SWEEP_INTERVAL = 24 * 60 * 60 * 1000  // 24h
-    const sweepInterval = setInterval(async () => {
-      try {
-        await runSweep(db, config.palaceId)
-        await runDurabilityLifecycle(db, config.palaceId)
-        await runNoiseAssessment(db, config.palaceId, pipelineConfig)
-      } catch (err) {
-        console.error('[scheduler] sweep failed:', err)
-      }
-    }, SWEEP_INTERVAL)
-    stopSweep = () => clearInterval(sweepInterval)
-  }
+  // Start maintenance scheduler (sweep, durability, dedup, cluster, noise)
+  // Replaces external K8s CronJobs — all tasks are cron-scheduled in-process
+  const stopMaintenance = startMaintenance({ db, palaceId: config.palaceId, pipelineConfig })
 
   const app = new Hono()
 
@@ -317,7 +305,7 @@ export function createApp(config: AppConfig) {
   // Cleanup on shutdown
   const originalFetch = app.fetch.bind(app)
   return Object.assign(app, {
-    stop: () => { stopWorker(); stopGraphWorker(); stopTruth(); stopSweep?.(); scheduler.stop() },
+    stop: () => { stopWorker(); stopGraphWorker(); stopTruth(); stopMaintenance(); scheduler.stop() },
     fetch: originalFetch,
   })
 }
