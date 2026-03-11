@@ -57,7 +57,7 @@ const ENTITY_TYPES = [
   'topic',
 ]
 
-let _url: string | null = null
+let _url: string | null | undefined = undefined
 
 function getUrl(): string | null {
   if (_url !== undefined) return _url
@@ -119,7 +119,7 @@ export async function extractEntitiesWithGLiNER(text: string): Promise<GLiNERRes
       durationMs: data.duration_ms,
     }
   } catch (err) {
-    console.warn('[gliner] extraction failed — falling back to LLM-only:', (err as Error).message)
+    console.warn('[gliner] extraction failed — falling back to LLM-only:', (err as Error).name, (err as Error).message)
     return null
   }
 }
