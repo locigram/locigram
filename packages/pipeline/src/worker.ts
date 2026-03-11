@@ -16,17 +16,21 @@ export function startEmbedWorker(
     try {
       const unembedded = await db
         .select({
-          id:          locigrams.id,
-          content:     locigrams.content,
-          locus:       locigrams.locus,
-          sourceType:  locigrams.sourceType,
-          connector:   locigrams.connector,
-          entities:    locigrams.entities,
-          confidence:  locigrams.confidence,
-          category:    locigrams.category,
-          tier:        locigrams.tier,
-          isReference: locigrams.isReference,
-          createdAt:   locigrams.createdAt,
+          id:              locigrams.id,
+          content:         locigrams.content,
+          locus:           locigrams.locus,
+          sourceType:      locigrams.sourceType,
+          connector:       locigrams.connector,
+          entities:        locigrams.entities,
+          confidence:      locigrams.confidence,
+          category:        locigrams.category,
+          tier:            locigrams.tier,
+          isReference:     locigrams.isReference,
+          createdAt:       locigrams.createdAt,
+          subject:         locigrams.subject,
+          predicate:       locigrams.predicate,
+          objectVal:       locigrams.objectVal,
+          durabilityClass: locigrams.durabilityClass,
         })
         .from(locigrams)
         // Only embed hot/warm — cold tier stays in Postgres only
@@ -46,16 +50,20 @@ export function startEmbedWorker(
 
           // Payload stored in Qdrant — used for filtering at search time
           const payload = {
-            palace_id:    palaceId,
-            locus:        loc.locus,
-            source_type:  loc.sourceType,
-            connector:    loc.connector ?? loc.sourceType,
-            entities:     loc.entities,
-            confidence:   loc.confidence,
-            category:     loc.category,
-            tier:         loc.tier,
-            is_reference: loc.isReference,
-            created_at:   loc.createdAt.toISOString(),
+            palace_id:        palaceId,
+            locus:            loc.locus,
+            source_type:      loc.sourceType,
+            connector:        loc.connector ?? loc.sourceType,
+            entities:         loc.entities,
+            confidence:       loc.confidence,
+            category:         loc.category,
+            tier:             loc.tier,
+            is_reference:     loc.isReference,
+            created_at:       loc.createdAt.toISOString(),
+            subject:          loc.subject ?? null,
+            predicate:        loc.predicate ?? null,
+            object_val:       loc.objectVal ?? null,
+            durability_class: loc.durabilityClass ?? null,
           }
 
           await vectorClient.upsert(collectionName, loc.id, vector, payload)
