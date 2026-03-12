@@ -1,6 +1,7 @@
 import { locigrams } from '@locigram/db'
-import { eq, and, isNull, inArray } from 'drizzle-orm'
+import { eq, and, isNull, inArray, not, like } from 'drizzle-orm'
 import type { DB } from '@locigram/db'
+import { isNoise } from './noise-filter'
 
 export function startEmbedWorker(
   db: DB,
@@ -34,10 +35,12 @@ export function startEmbedWorker(
         })
         .from(locigrams)
         // Only embed hot/warm — cold tier stays in Postgres only
+        // Skip heartbeat loci — they're operational telemetry, not knowledge
         .where(and(
           eq(locigrams.palaceId, palaceId),
           isNull(locigrams.embeddingId),
           inArray(locigrams.tier, ['hot', 'warm']),
+          not(like(locigrams.locus, '%/heartbeat')),
         ))
         .limit(50)
 
@@ -46,6 +49,15 @@ export function startEmbedWorker(
 
       for (const loc of unembedded) {
         try {
+          // Skip noise content from embedding — saves Qdrant space and search quality
+          if (isNoise(loc.content)) {
+            // Mark as "embedded" with a sentinel so we don't re-process
+            await db.update(locigrams)
+              .set({ embeddingId: `skip:noise:${loc.id}` })
+              .where(eq(locigrams.id, loc.id))
+            continue
+          }
+
           const vector = await vectorClient.embed(loc.content)
 
           // Payload stored in Qdrant — used for filtering at search time

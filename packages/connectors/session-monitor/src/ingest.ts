@@ -35,13 +35,38 @@ function useConnectorApi(): boolean {
   return !!(config.connectorToken && config.connectorInstanceId)
 }
 
+/**
+ * Strip LLM thinking blocks from content before pushing to Locigram.
+ * Catches: <think>...</think> tags, "Thinking Process:" blocks, raw CoT.
+ */
+function stripThinkingBlocks(text: string): string {
+  // Strip XML-style <think> tags (Qwen3, DeepSeek)
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+  // Strip plain-text "Thinking Process:" blocks — everything from marker to first blank line followed by real content
+  cleaned = cleaned.replace(/^Thinking Process:[\s\S]*?(?=\n\n[^*\d\s])/m, '').trim()
+  // If still starts with "Thinking Process:", strip to first non-bullet paragraph
+  if (cleaned.startsWith('Thinking Process:')) {
+    const firstRealPara = cleaned.search(/\n\n(?![\s*\d])/)
+    if (firstRealPara !== -1) cleaned = cleaned.slice(firstRealPara).trim()
+  }
+  return cleaned
+}
+
 export async function pushToLocigram(agentName: string, sessionId: string, transcript: string, occurredAt?: Date, locus?: string): Promise<void> {
+  // Strip thinking blocks before pushing — raw CoT is noise, not memory
+  const cleanedTranscript = stripThinkingBlocks(transcript)
+  if (!cleanedTranscript || cleanedTranscript.length < 10) {
+    console.log(`[session-monitor] skipped push: content empty after stripping thinking blocks`)
+    syncStats.skipped++
+    return
+  }
+
   if (useConnectorApi()) {
     // New connector framework path
     const url = `${config.locigramUrl}/api/connectors/${config.connectorInstanceId}/ingest`
     const body = JSON.stringify({
       memories: [{
-        content: transcript,
+        content: cleanedTranscript,
         sourceType: 'session-transcript',
         sourceRef: `session:${agentName}/${sessionId}`,
         occurredAt: (occurredAt ?? new Date()).toISOString(),
@@ -71,7 +96,7 @@ export async function pushToLocigram(agentName: string, sessionId: string, trans
     const body = JSON.stringify({
       agentName,
       sessionId,
-      transcript,
+      transcript: cleanedTranscript,
       occurredAt: (occurredAt ?? new Date()).toISOString(),
       ...(locus ? { locus } : {}),
     })
@@ -111,16 +136,18 @@ async function maybeReportSync(): Promise<void> {
 }
 
 export async function pushCheckpoint(agentName: string, sessionId: string, summary: string, occurredAt?: Date, locus?: string): Promise<void> {
+  // Strip thinking blocks from checkpoint content too
+  const cleanedSummary = stripThinkingBlocks(summary)
   const resolvedLocus = locus ?? `agent/${agentName}/context`
   // Extract a meaningful object_val — first sentence or first 200 chars
-  const firstSentence = summary.match(/^[^.!?\n]+[.!?]?/)?.[0]?.trim()
-  const objectVal = firstSentence && firstSentence.length > 20 ? firstSentence.slice(0, 200) : summary.slice(0, 200)
+  const firstSentence = cleanedSummary.match(/^[^.!?\n]+[.!?]?/)?.[0]?.trim()
+  const objectVal = firstSentence && firstSentence.length > 20 ? firstSentence.slice(0, 200) : cleanedSummary.slice(0, 200)
 
   if (useConnectorApi()) {
     const url = `${config.locigramUrl}/api/connectors/${config.connectorInstanceId}/ingest`
     const body = JSON.stringify({
       memories: [{
-        content: summary,
+        content: cleanedSummary,
         sourceType: 'system',
         sourceRef: `session:${agentName}/${sessionId}/checkpoint`,
         occurredAt: (occurredAt ?? new Date()).toISOString(),
@@ -143,7 +170,7 @@ export async function pushCheckpoint(agentName: string, sessionId: string, summa
     // Legacy path — POST to remember endpoint with structured fields
     const url = `${config.locigramUrl}/api/remember`
     const body = JSON.stringify({
-      content: summary,
+      content: cleanedSummary,
       locus: resolvedLocus,
       sourceType: 'system',
       source_ref: `session:${agentName}/${sessionId}/checkpoint`,

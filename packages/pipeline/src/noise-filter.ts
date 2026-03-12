@@ -15,22 +15,40 @@ const BOILERPLATE_PATTERNS = [
   /^(hi|hello|hey|good morning)\b/i,
   /^HEARTBEAT\b/,
   /^fresh session\b/i,
-  // Session monitor noise: summarizer prompt echoes
+
+  // ── Session monitor / scribe noise ─────────────────────────────────────
+  // Summarizer prompt echoes — the scribe's instructions are not memories
   /^(The )?task is to summarize/i,
   /^(The )?session is being summarized/i,
   /^Summary must contain/i,
   /^(The )?immediate task is to/i,
-  // CoT leaks from LLM summarizer
+  /summarize ?(an )?ongoing ?(AI )?assistant session/i,
+  /^session summary must/i,
+  /^(The )?task requires summarizing/i,
+  /for context handoff/i,
+
+  // CoT leaks from LLM summarizer (Qwen3, DeepSeek, etc.)
   /^Thinking Process:/i,
   /^\d+\.\s+\*\*Analyze/i,
+  /^\*\*Analyze the Request/i,
+
   // Cron job execution logs (operational, not memorable)
   /^(A |The )?scheduled (cron|automated|local) (job|task)/i,
   /^(A |The )?(cron job|usage sync|health check) (was |has been )?(executed|completed|initiated|run)\b/i,
-  // Agent metadata noise
+
+  // ── Heartbeat / agent telemetry ────────────────────────────────────────
+  // These are operational signals, not knowledge
   /^{"agentType":/,
   /^{"status":"(alive|ok)"/,
+  /^{"agentType":"permanent","status":"alive"/,
+
   // Return-only-JSON instruction echoes
   /must return ONLY raw JSON/i,
+
+  // ── Generic instruction echoes ─────────────────────────────────────────
+  /^(The )?domain:?\s*(general|infrastructure|coding|email|business)/i,
+  /^Current task summary must be/i,
+  /^User requested ?(a )?session summary/i,
 ]
 
 export function isNoise(text: string): boolean {
@@ -58,6 +76,11 @@ const OPERATIONAL_NOISE_PATTERNS = [
   /^(The |A )?session is (a |being )?(memory extraction|summariz)/i,
   /^(The |A )?(sync|synchronization) script\b/i,
   /^(The )?agent named '\w+' is executing/i,
+  // Scribe agent meta-content that slips past isNoise()
+  /summarize ?(an )?ongoing ?(AI )?assistant session/i,
+  /^(If |When )\(x,y\) is in relation/i,  // Math homework from scribe hallucinations
+  /^(The )?command 'set search_key/i,      // Shell instruction echoes
+  /^All CSS utility classes/i,             // CSS analysis noise
 ]
 
 export interface ExtractedLocigram {

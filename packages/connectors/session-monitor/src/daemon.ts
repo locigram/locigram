@@ -205,6 +205,11 @@ async function ensureTranscriptDir(): Promise<void> {
 
 async function appendTranscript(entries: string[], state: AgentWatcherState): Promise<void> {
   if (entries.length === 0) return
+
+  // Skip transcript ingestion for scribe agent — its content is self-referential noise
+  // ("Task is to summarize...", "Thinking Process:..."). Only checkpoints matter.
+  if (state.agentName === 'scribe') return
+
   for (const _entry of entries) {
     state.parsedMessageCount += 1
     if (state.parsedMessageCount > 1 && (state.parsedMessageCount - state.lastSummaryMessageCount) >= config.summaryEveryN) {
@@ -501,6 +506,13 @@ function trackPendingActionDrift(structured: StructuredContext | null, state: Ag
 // ── Handoff dump ─────────────────────────────────────────────────────────────
 
 async function triggerHandoffDump(triggerSizeMb: number, state: AgentWatcherState, triggerReason = 'file-size'): Promise<void> {
+  // Skip handoff dumps for scribe agent — its transcripts are meta-noise.
+  // Scribe exists to summarize sessions; ingesting its own summaries creates a self-referential loop.
+  if (state.agentName === 'scribe') {
+    log('skipping handoff for scribe agent (transcript-only, no LLM summarization)', state.agentName)
+    return
+  }
+
   // Process any pending summaries from previous LLM failures
   await processPendingQueue(state)
 

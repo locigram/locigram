@@ -147,13 +147,16 @@ fleetRoute.get('/', async (c) => {
 })
 
 // ── POST /api/agents/:agentName/heartbeat ───────────────────────────────────
-// Stores a lightweight heartbeat locigram under locus agent/{agentName}/heartbeat.
+// In-memory only — no longer stored as locigrams (was polluting vector search).
 
 export const heartbeatRoute = new Hono()
 
+// In-memory heartbeat tracker — heartbeats are NOT stored as locigrams.
+// They're operational telemetry (last-seen timestamps), not knowledge.
+// Previously stored as locigrams: 1,511 junk records that polluted vector search.
+const agentHeartbeats = new Map<string, { lastSeen: Date; agentType: string; status: string }>()
+
 heartbeatRoute.post('/:agentName/heartbeat', async (c) => {
-  const db = c.get('db')
-  const palace = c.get('palace')
   const agentName = c.req.param('agentName')
 
   let body: { agentType?: string; status?: string } = {}
@@ -166,21 +169,20 @@ heartbeatRoute.post('/:agentName/heartbeat', async (c) => {
   const agentType = body.agentType ?? 'permanent'
   const status = body.status ?? 'alive'
   const now = new Date()
-  const locus = `agent/${agentName}/heartbeat`
-  const sourceRef = `heartbeat:${agentName}:${now.toISOString()}`
 
-  await db.insert(locigrams).values({
-    content: JSON.stringify({ agentType, status, agentName, timestamp: now.toISOString() }),
-    sourceType: 'system',
-    sourceRef,
-    locus,
-    occurredAt: now,
-    entities: [agentName],
-    metadata: { agentType, status, connector: 'session-monitor-heartbeat' },
-    palaceId: palace.id,
-    isReference: false,
-    importance: 'low',
-  })
+  // Store in-memory only — no Postgres, no Qdrant, no pollution
+  agentHeartbeats.set(agentName, { lastSeen: now, agentType, status })
 
   return c.json({ ok: true, lastSeen: now.toISOString() })
+})
+
+// GET /api/agents — list all agents with their last heartbeat
+heartbeatRoute.get('/', async (c) => {
+  const agents = Array.from(agentHeartbeats.entries()).map(([name, hb]) => ({
+    agentName: name,
+    lastSeen: hb.lastSeen.toISOString(),
+    agentType: hb.agentType,
+    status: hb.status,
+  }))
+  return c.json(agents)
 })
