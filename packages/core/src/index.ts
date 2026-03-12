@@ -33,6 +33,13 @@ export type SourceType =
   // AI / Session
   | 'llm-session'    // extracted from AI conversation sessions
   | 'note'           // manual notes / observations
+  // Personal
+  | 'health'         // Apple Health, Fitbit, wearable data
+  | 'location'       // GPS coordinates, geofence, check-ins
+  | 'purchase'       // receipts, transactions, orders
+  | 'browsing'       // browser history, bookmarks
+  | 'notification'   // phone/app notifications
+  | 'iot'            // smart home, sensors, IoT devices
   // System
   | 'manual'         // manually pushed via webhook
   | 'webhook'        // raw webhook push (sourceType not specified)

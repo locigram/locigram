@@ -150,7 +150,10 @@ export function createApp(config: AppConfig) {
   app.route('/api/people',    peopleRoute)
   app.route('/api/timeline',  timelineRoute)
   app.route('/api/feedback',  feedbackRoute)
-  app.route('/api/webhook',   buildWebhookRoute())
+  app.route('/api/webhook',   buildWebhookRoute({
+    secret: process.env.WEBHOOK_SECRET,
+    apiKeys: process.env.WEBHOOK_API_KEYS?.split(',').filter(Boolean),
+  }))
   app.route('/api/bootstrap', bootstrapRoute)
   app.route('/api/connectors', connectorsRoute)
   app.route('/api/context/active', activeContextRoute)
