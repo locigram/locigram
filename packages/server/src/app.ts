@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import { createVectorClient, ensureCollection, embed, searchSimilar } from '@locigram/vector'
 import { startEmbedWorker, defaultPipelineConfig } from '@locigram/pipeline'
 import { startGraphWorker } from './graph/graph-worker'
+import { startMentionWorker } from './mention-worker'
 import type { PipelineConfig, LLMConfig } from '@locigram/pipeline'
 import { startTruthEngine } from '@locigram/truth'
 import { startMaintenance } from './maintenance'
@@ -101,6 +102,7 @@ export function createApp(config: AppConfig) {
   // Start background embed worker (every 30s)
   const stopWorker = startEmbedWorker(db, vectorClient, config.palaceId, 30_000)
   const stopGraphWorker = startGraphWorker(db, config.palaceId, 30_000)
+  const stopMentionWorker = startMentionWorker(db, config.palaceId, 60_000)
 
   // Start truth engine (reinforcement detection + promotion — every 6 hours)
   const stopTruth = startTruthEngine(db, {
@@ -305,7 +307,7 @@ export function createApp(config: AppConfig) {
   // Cleanup on shutdown
   const originalFetch = app.fetch.bind(app)
   return Object.assign(app, {
-    stop: () => { stopWorker(); stopGraphWorker(); stopTruth(); stopMaintenance(); scheduler.stop() },
+    stop: () => { stopWorker(); stopGraphWorker(); stopMentionWorker(); stopTruth(); stopMaintenance(); scheduler.stop() },
     fetch: originalFetch,
   })
 }
