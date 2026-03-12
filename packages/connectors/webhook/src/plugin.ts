@@ -85,19 +85,27 @@ export function toRawMemory(
     },
   }
 
-  // If pre-classified or locus is provided, build the preClassified block
-  if (item.preClassified || locus) {
+  // Build preClassified block ONLY when the caller explicitly provides structured data.
+  // Setting just a locus should NOT skip LLM extraction — the pipeline treats
+  // `preClassified` as "I already have structure, skip the LLM".
+  if (item.preClassified) {
     raw.preClassified = {
       locus:           locus ?? 'personal/general',
-      entities:        item.preClassified?.entities ?? [],
-      isReference:     item.preClassified?.isReference ?? false,
-      importance:      (item.preClassified?.importance ?? 'normal') as 'low' | 'normal' | 'high',
-      category:        item.preClassified?.category,
-      subject:         item.preClassified?.subject,
-      predicate:       item.preClassified?.predicate,
-      objectVal:       item.preClassified?.objectVal,
-      durabilityClass: item.preClassified?.durabilityClass ?? 'permanent',
+      entities:        item.preClassified.entities ?? [],
+      isReference:     item.preClassified.isReference ?? false,
+      importance:      (item.preClassified.importance ?? 'normal') as 'low' | 'normal' | 'high',
+      category:        item.preClassified.category,
+      subject:         item.preClassified.subject,
+      predicate:       item.preClassified.predicate,
+      objectVal:       item.preClassified.objectVal,
+      durabilityClass: item.preClassified.durabilityClass ?? 'permanent',
     }
+  }
+
+  // If locus is set but no preClassified, pass locus through metadata
+  // so the pipeline's LLM extraction can use it as a hint (but still runs extraction)
+  if (locus && !item.preClassified) {
+    raw.metadata = { ...raw.metadata, requested_locus: locus }
   }
 
   return raw
