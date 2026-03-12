@@ -18,6 +18,7 @@
 import { CronJob } from 'cron'
 import { runSweep, runDurabilityLifecycle, runClusterAnalysis } from '@locigram/truth'
 import { runDedup, runNoiseAssessment } from '@locigram/pipeline'
+import { runEntityHygiene } from './entity-hygiene'
 import type { DB } from '@locigram/db'
 import type { PipelineConfig } from '@locigram/pipeline'
 
@@ -72,6 +73,12 @@ export function startMaintenance(config: MaintenanceConfig): () => void {
       envKey: 'LOCIGRAM_CRON_NOISE',
       defaultCron: '0 4 * * *',
       run: async () => { await runNoiseAssessment(db, palaceId, pipelineConfig) },
+    },
+    {
+      name: 'entity-hygiene',
+      envKey: 'LOCIGRAM_CRON_ENTITY_HYGIENE',
+      defaultCron: '0 5 * * *',
+      run: async () => { await runEntityHygiene(db, palaceId) },
     },
   ]
 
