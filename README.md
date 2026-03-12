@@ -22,6 +22,8 @@ AI assistants lose context when a session ends or a platform switches. Locigram 
 - [**Connectors**](docs/connectors.md) — Feed data from Email, Tickets, Notes, Sessions, and more.
 - [**MCP & Integration**](docs/mcp.md) — Connecting Claude, ChatGPT, and OpenClaw.
 - [**Architecture**](docs/architecture.md) — Deep dive into the stack and data flow.
+- [**Connector API**](docs/connector-api.md) — Building connectors: webhook, external daemon, or bundled plugin.
+- [**Apple Health**](docs/health-connector.md) — iOS Shortcuts → granular health data (48 data points/day).
 
 ---
 
@@ -74,7 +76,7 @@ docker compose up -d
 
 | Package | Type | Description |
 |---------|------|-------------|
-| `@locigram/connector-webhook` | Bundled | Generic inbound push endpoint. |
+| `@locigram/connector-webhook` | Bundled | First-class webhook ingestion with typed endpoints for health, location, browsing. |
 | `@locigram/connector-gmail` | Bundled | Google email via API. |
 | `@locigram/connector-m365` | Bundled | Microsoft email + Teams via Graph API. |
 | `@locigram/connector-obsidian-audit` | External | Vault note evaluation + indexing. |
@@ -136,6 +138,34 @@ curl -X POST /api/connectors/$ID/report \
 ```
 
 See [Connectors documentation](docs/connectors.md) for the full API reference and building your own.
+
+### Webhook Ingestion
+
+For data sources that can make HTTP calls (iOS Shortcuts, Zapier, cron scripts, IoT),
+webhooks are the simplest ingestion path — no connector code needed:
+
+```bash
+# Generic — goes through full LLM extraction pipeline
+curl -X POST /api/webhook/ingest \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"content": "Met with Acme Corp, agreed on $5k/month contract"}'
+
+# Typed — auto-sets locus + sourceType, supports preClassified for structured data
+curl -X POST /api/webhook/health \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"content": "Steps: 8421, HR: 65bpm", "preClassified": {"subject": "Andrew", "predicate": "daily_health", "objectVal": "8421 steps, 65bpm"}}'
+```
+
+| Endpoint | Locus | Use For |
+|----------|-------|---------|
+| `POST /api/webhook/ingest` | (you set) | Generic data |
+| `POST /api/webhook/health` | `personal/health` | Apple Health, Fitbit, wearables |
+| `POST /api/webhook/location` | `personal/location` | GPS, geofence, check-ins |
+| `POST /api/webhook/browsing` | `personal/browsing` | Browser history, bookmarks |
+
+Supports single or batch mode (up to 100 per POST), automatic dedup via content hash,
+and `preClassified` payloads that skip LLM extraction for structured data.
+See [Connector API](docs/connector-api.md) for the full reference.
 
 ---
 
