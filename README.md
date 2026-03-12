@@ -10,8 +10,8 @@ AI assistants lose context when a session ends or a platform switches. Locigram 
 
 - **Persistent** — Decisions and facts survive compaction, session resets, and platform changes.
 - **Unified** — One memory palace for all your tools (Claude, ChatGPT, OpenClaw, custom agents).
-- **Intelligent** — Automatic decay, truth reinforcement from repeated observations, and entity clustering.
-- **Connectable** — Standardized connector framework to feed data from any source.
+- **Intelligent** — Automatic decay, truth reinforcement, entity detection (GLiNER NER + LLM), and type enforcement via evidence voting.
+- **Connectable** — Standardized connector framework to feed data from any source. GLiNER entity extraction runs on every ingestion path.
 - **Private** — Self-hosted. Your data never leaves your infrastructure.
 
 ---
@@ -33,6 +33,8 @@ AI assistants lose context when a session ends or a platform switches. Locigram 
 | **Truth** | A reinforced fact built from multiple locigrams. |
 | **Palace** | Your private, isolated memory store. Multi-tenant by design. |
 | **Locus** | A namespace (e.g., `business/acme`) for scoped recall. |
+| **Entity** | A canonical named thing (person, org, product, topic, place) with aliases. |
+| **Entity Mention** | Evidence of an entity detection — tracks source (GLiNER/LLM), confidence, and text span. |
 | **Connector** | A standardized data feeder — pulls from external sources, pushes into your palace. |
 
 ---
@@ -58,6 +60,15 @@ docker compose up -d
 | `@locigram/registry` | Connector plugin registry and loader. |
 | `@locigram/db` | Drizzle ORM schema and idempotent migrations. |
 | `@locigram/vector` | Vector store operations (Qdrant). |
+
+### Background Workers (in-process)
+
+| Worker | Interval | Role |
+|--------|----------|------|
+| `embed-worker` | 30s | Vectorize locigrams → Qdrant |
+| `graph-worker` | 30s | Sync memory nodes + entity edges → Memgraph |
+| `mention-worker` | 60s | GLiNER entity detection backfill for missed locigrams |
+| `truth-engine` | 6h | Reinforcement detection + truth promotion |
 
 ### Connector Packages
 
@@ -139,7 +150,7 @@ Locigram exposes an MCP server for direct integration with AI assistants:
 | OpenClaw | Bearer token | ✅ |
 | Custom agents | Bearer token or OAuth | ✅ |
 
-MCP tools: `memory_remember`, `memory_recall`, `memory_session_start`, `connectors_list`, `connectors_create`, `connectors_sync`, `connectors_status`.
+MCP tools: `memory_remember`, `memory_recall`, `memory_session_start`, `structured_recall`, `connectors_list`, `connectors_create`, `connectors_sync`, `connectors_status`.
 
 ---
 
