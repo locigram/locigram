@@ -6,3 +6,4 @@ dist/
 *.sqlite
 bun.lockb
 .DS_Store
+tools/*.shortcut
