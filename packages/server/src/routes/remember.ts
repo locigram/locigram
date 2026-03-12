@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { eq, and } from 'drizzle-orm'
 import { locigrams, sources } from '@locigram/db'
+import { extractEntitiesWithGLiNER, storeGLiNERMentions } from '@locigram/pipeline'
 
 
 const schema = z.object({
@@ -105,8 +106,17 @@ rememberRoute.post('/', zValidator('json', schema), async (c) => {
     })
   }
 
-  // TODO: queue embedding (async — don't block response)
-  // Graph write handled by graph-worker (polls graphSyncedAt IS NULL every 30s)
+  // Run GLiNER entity detection async — don't block response
+  // Graph + embed handled by background workers (poll every 30s)
+  extractEntitiesWithGLiNER(body.content).then(async (result) => {
+    if (!result || result.mentions.length === 0) return
+    try {
+      await storeGLiNERMentions(db, { locigramId: locigram.id, palaceId: palace.id }, result.mentions)
+      console.log(`[remember] GLiNER: ${result.mentions.length} mentions stored for ${locigram.id}`)
+    } catch (err) {
+      console.warn('[remember] GLiNER mention storage failed:', (err as Error).message)
+    }
+  }).catch(() => { /* GLiNER unavailable — mention-worker will backfill */ })
 
   return c.json({ id: locigram.id, status: 'stored' }, 201)
 })

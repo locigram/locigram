@@ -3,6 +3,8 @@ import type { DB } from '@locigram/db'
 import type { RawMemory } from '@locigram/core'
 import type { PipelineConfig } from './config'
 import { extractFromRaw } from './extract'
+import { extractEntitiesWithGLiNER } from './gliner'
+import type { GLiNERMention } from './gliner'
 import { resolveEntities } from './resolve'
 import { isDuplicate } from './dedup'
 import { qualityGate } from './noise-filter'
@@ -44,6 +46,19 @@ export async function ingest(
 
       // 2. Extract locigrams + entities from raw text
       // Skip LLM extraction for pre-classified structured data (financial records, devices, contacts)
+      // Run GLiNER on ALL content — even preClassified data gets entity detection
+      let glinerMentions: GLiNERMention[] = []
+      try {
+        const glinerResult = await extractEntitiesWithGLiNER(raw.content)
+        if (glinerResult) {
+          glinerMentions = glinerResult.mentions
+          console.log(`[pipeline] GLiNER: ${glinerResult.entities.length} entities (${glinerMentions.length} mentions ≥0.5) in ${glinerResult.durationMs}ms`)
+        }
+      } catch (err) {
+        // Non-fatal — continue without GLiNER
+        console.warn('[pipeline] GLiNER error (continuing):', (err as Error).message)
+      }
+
       const extraction = raw.preClassified
         ? {
             entities:      raw.preClassified.entities.map(name => ({ name, type: 'org' as const, aliases: [] })),
@@ -51,7 +66,7 @@ export async function ingest(
             is_reference:  raw.preClassified.isReference,
             isReference:   raw.preClassified.isReference,
             referenceType: raw.preClassified.referenceType ?? null,
-            glinerMentions: [] as import('./gliner').GLiNERMention[],
+            glinerMentions,
             locigrams:     [{
               content: raw.content,
               confidence: 1.0,
@@ -62,7 +77,7 @@ export async function ingest(
               durability_class: (raw.preClassified.durabilityClass ?? (raw.preClassified!.isReference ? 'permanent' : 'active')) as 'permanent' | 'stable' | 'active' | 'session' | 'checkpoint',
             }],
           }
-        : await extractFromRaw(raw, config)
+        : await extractFromRaw(raw, config, glinerMentions)
 
       // 2b. Post-extraction quality gate — demote operational noise mis-classified as decisions
       // Only apply to LLM-extracted results, not pre-classified connector data

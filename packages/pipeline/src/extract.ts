@@ -139,6 +139,7 @@ function authHeaders(role: LLMRole): Record<string, string> {
 export async function extractFromRaw(
   raw: RawMemory,
   config: PipelineConfig,
+  precomputedGlinerMentions?: import('./gliner').GLiNERMention[],
 ): Promise<ExtractionResult> {
   const role = config.llm.extract
 
@@ -154,15 +155,24 @@ export async function extractFromRaw(
   const regexIsReference = detectReferenceByRegex(raw.content)
 
   // Capture GLiNER mentions before LLM — preserved even if LLM fails/times out
-  let glinerMentions: import('./gliner').GLiNERMention[] = []
+  // Use precomputed mentions from ingest.ts if available (avoids double-running GLiNER)
+  let glinerMentions: import('./gliner').GLiNERMention[] = precomputedGlinerMentions ?? []
+  let glinerEntities: import('./gliner').GLiNEREntity[] | null = null
+
+  if (!precomputedGlinerMentions) {
+    try {
+      const glinerResult = await extractEntitiesWithGLiNER(raw.content)
+      glinerMentions = glinerResult?.mentions ?? []
+      glinerEntities = glinerResult?.entities ?? null
+      if (glinerResult) {
+        console.log(`[pipeline] GLiNER found ${glinerResult.entities.length} entities (${glinerMentions.length} mentions ≥0.5) in ${glinerResult.durationMs}ms`)
+      }
+    } catch (err) {
+      console.warn('[pipeline] GLiNER error in extract:', (err as Error).message)
+    }
+  }
 
   try {
-    // GLiNER pre-extraction (fast, optional — falls back gracefully if unavailable)
-    const glinerResult = await extractEntitiesWithGLiNER(raw.content)
-    glinerMentions = glinerResult?.mentions ?? []
-    if (glinerResult) {
-      console.log(`[pipeline] GLiNER found ${glinerResult.entities.length} entities (${glinerMentions.length} mentions ≥0.5) in ${glinerResult.durationMs}ms`)
-    }
 
     const res = await fetch(`${role.url}/chat/completions`, {
       method:  'POST',
@@ -171,7 +181,7 @@ export async function extractFromRaw(
         model: role.model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: buildUserMessage(raw.content, glinerResult?.entities ?? null, role.noThink ?? false) },
+          { role: 'user', content: buildUserMessage(raw.content, glinerEntities, role.noThink ?? false) },
         ],
         temperature: 0.1,
       }),
