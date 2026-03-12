@@ -46,6 +46,7 @@ export async function pushToLocigram(agentName: string, sessionId: string, trans
         sourceRef: `session:${agentName}/${sessionId}`,
         occurredAt: (occurredAt ?? new Date()).toISOString(),
         locus: locus ?? `agent/${agentName}/session/${sessionId}`,
+        importance: 'normal',
         metadata: { agentName, sessionId },
       }],
     })
@@ -111,7 +112,9 @@ async function maybeReportSync(): Promise<void> {
 
 export async function pushCheckpoint(agentName: string, sessionId: string, summary: string, occurredAt?: Date, locus?: string): Promise<void> {
   const resolvedLocus = locus ?? `agent/${agentName}/context`
-  const objectVal = summary.slice(0, 200)
+  // Extract a meaningful object_val — first sentence or first 200 chars
+  const firstSentence = summary.match(/^[^.!?\n]+[.!?]?/)?.[0]?.trim()
+  const objectVal = firstSentence && firstSentence.length > 20 ? firstSentence.slice(0, 200) : summary.slice(0, 200)
 
   if (useConnectorApi()) {
     const url = `${config.locigramUrl}/api/connectors/${config.connectorInstanceId}/ingest`
@@ -126,8 +129,8 @@ export async function pushCheckpoint(agentName: string, sessionId: string, summa
         category: 'checkpoint',
         durability_class: 'checkpoint',
         importance: 'high',
-        subject: 'checkpoint',
-        predicate: 'session_state',
+        subject: agentName,
+        predicate: 'compaction_state',
         object_val: objectVal,
       }],
     })
@@ -147,8 +150,8 @@ export async function pushCheckpoint(agentName: string, sessionId: string, summa
       category: 'checkpoint',
       durability_class: 'checkpoint',
       importance: 'high',
-      subject: 'checkpoint',
-      predicate: 'session_state',
+      subject: agentName,
+      predicate: 'compaction_state',
       object_val: objectVal,
     })
 
