@@ -17,6 +17,7 @@ COPY packages/connectors/microsoft365/package.json     ./packages/connectors/mic
 COPY packages/connectors/gmail/package.json            ./packages/connectors/gmail/
 COPY packages/connectors/email/package.json            ./packages/connectors/email/
 COPY packages/connectors/sms/package.json              ./packages/connectors/sms/
+COPY packages/connectors/strava/package.json           ./packages/connectors/strava/
 
 
 # Install deps (workspace-aware)
