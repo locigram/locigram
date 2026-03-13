@@ -1,12 +1,17 @@
 /**
- * Strava API routes for backfill and OAuth callback.
+ * Strava API routes.
+ * Split into public (OAuth) and protected (backfill, athlete) routes.
  */
 import { Hono } from 'hono'
 import { exchangeCode, getAuthUrl } from './auth'
 import { getAthlete } from './client'
 import { backfillActivities } from './backfill'
 
-export function buildStravaApiRoute() {
+/**
+ * Public routes — no palace auth required.
+ * OAuth redirect + callback from Strava.
+ */
+export function buildStravaPublicRoute() {
   const route = new Hono()
 
   // ── OAuth authorize redirect ──────────────────────────────────────────────
@@ -23,19 +28,26 @@ export function buildStravaApiRoute() {
 
     try {
       const tokens = await exchangeCode(code)
-      // In production, you'd store these securely.
-      // For now, return them so they can be added to env/1Password.
       return c.json({
         ok: true,
-        message: 'Strava authorized! Add these to your environment:',
-        STRAVA_ACCESS_TOKEN: tokens.access_token,
-        STRAVA_REFRESH_TOKEN: tokens.refresh_token,
+        message: 'Strava authorized! Tokens have been cached in-memory. Run backfill now.',
         expires_at: new Date(tokens.expires_at * 1000).toISOString(),
+        // Don't expose tokens in response — they're cached in the auth module
       })
     } catch (err: any) {
       return c.json({ error: err.message }, 500)
     }
   })
+
+  return route
+}
+
+/**
+ * Protected routes — require palace Bearer token auth.
+ * Athlete info and backfill.
+ */
+export function buildStravaProtectedRoute() {
+  const route = new Hono()
 
   // ── Athlete profile ───────────────────────────────────────────────────────
   route.get('/athlete', async (c) => {
@@ -75,3 +87,6 @@ export function buildStravaApiRoute() {
 
   return route
 }
+
+// Legacy export for backwards compat
+export const buildStravaApiRoute = buildStravaPublicRoute

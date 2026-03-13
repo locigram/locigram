@@ -37,7 +37,17 @@ export async function exchangeCode(code: string): Promise<TokenResponse> {
     }),
   })
   if (!res.ok) throw new Error(`Strava auth failed: ${res.status} ${await res.text()}`)
-  return res.json()
+  const tokens: TokenResponse = await res.json()
+
+  // Cache tokens in memory so subsequent requests (backfill, webhook) can use them
+  cachedToken = {
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    expiresAt: tokens.expires_at,
+  }
+  console.log(`[strava] OAuth code exchanged — token cached, expires ${new Date(tokens.expires_at * 1000).toISOString()}`)
+
+  return tokens
 }
 
 /**
