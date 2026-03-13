@@ -1,256 +1,151 @@
 # Apple Health → Locigram Connector
 
-Ingests granular health data from Apple Watch/iPhone via iOS Shortcuts automation.
-48 data points per day (30-minute intervals, 24 hours) including sleep stages,
-heart rate, steps, and activity — all stored with precise timestamps for trend analysis.
+Ingests health data from Apple Watch/iPhone via the [Health Auto Export](https://www.healthyapps.dev/) iOS app.
+Supports 150+ metrics, workouts with GPS routes, sleep analysis, and automatic batch syncing —
+all stored with precise timestamps for trend analysis and cross-referencing with other personal data.
 
 ## Architecture
 
 ```
-Apple Watch → HealthKit (iPhone) → iOS Shortcut (nightly 11:30pm)
-  → POST /api/webhook/health → Locigram pipeline → Postgres + Qdrant + Memgraph
+Apple Watch → HealthKit (iPhone) → Health Auto Export app (periodic sync)
+  → POST /api/webhook/hae → Locigram pipeline → Postgres + Qdrant + Memgraph
 ```
 
-No third-party apps. No subscriptions. Native iOS Shortcuts has full HealthKit read access.
+The app handles all HealthKit querying, JSON formatting, and HTTP delivery.
+Locigram's `/api/webhook/hae` endpoint accepts the app's native JSON format directly —
+no manual iOS Shortcuts needed.
 
-## Data Collected Per 30-Minute Slot
+## Setup
 
-| Metric | HealthKit Type | Aggregation |
-|--------|---------------|-------------|
-| Steps | `HKQuantityTypeIdentifierStepCount` | sum |
-| Heart Rate (avg/min/max) | `HKQuantityTypeIdentifierHeartRate` | avg, min, max |
-| Active Calories | `HKQuantityTypeIdentifierActiveEnergyBurned` | sum |
-| Standing | `HKCategoryTypeIdentifierAppleStandHour` | boolean |
-| HRV (SDNN) | `HKQuantityTypeIdentifierHeartRateVariabilitySDNN` | latest |
-| Sleep Stage | `HKCategoryTypeIdentifierSleepAnalysis` | awake/core/deep/rem |
-| Resting HR | `HKQuantityTypeIdentifierRestingHeartRate` | daily (one value) |
+### 1. Install the App
 
-**Daily output:** 48 locigrams (one per 30-min slot), ~1,440/month.
+[Health Auto Export](https://apps.apple.com/app/id1115567461) — $3 on the App Store, 7-day free trial.
 
-## Payload Format
+### 2. Create Health Metrics Automation
 
-Each POST sends a batch of 48 memories:
+Open Health Auto Export → **Automations** → **+** → **REST API**
 
-```json
-{
-  "memories": [
-    {
-      "content": "12:00am–12:30am: 0 steps, avg HR 56bpm (min 52, max 61), sleep: deep, HRV 45ms",
-      "occurredAt": "2026-03-12T07:00:00Z",
-      "sourceRef": "health:2026-03-12:00:00",
-      "preClassified": {
-        "subject": "Andrew Le",
-        "predicate": "health_slot",
-        "objectVal": "0 steps, 56bpm avg HR, deep sleep",
-        "entities": ["Andrew Le"],
-        "importance": "normal",
-        "durabilityClass": "permanent",
-        "category": "observation"
-      },
-      "metadata": {
-        "hour": 0, "minute": 0,
-        "steps": 0,
-        "hr_avg": 56, "hr_min": 52, "hr_max": 61,
-        "active_cal": 0,
-        "standing": false,
-        "hrv": 45,
-        "sleep_stage": "deep",
-        "is_sleeping": true
-      }
-    },
-    {
-      "content": "2:00pm–2:30pm: 89 steps, avg HR 74bpm (min 68, max 81), standing: no, 12 active cal",
-      "occurredAt": "2026-03-12T21:00:00Z",
-      "sourceRef": "health:2026-03-12:14:00",
-      "preClassified": {
-        "subject": "Andrew Le",
-        "predicate": "health_slot",
-        "objectVal": "89 steps, 74bpm avg HR, not standing",
-        "entities": ["Andrew Le"],
-        "importance": "normal",
-        "durabilityClass": "permanent",
-        "category": "observation"
-      },
-      "metadata": {
-        "hour": 14, "minute": 0,
-        "steps": 89,
-        "hr_avg": 74, "hr_min": 68, "hr_max": 81,
-        "active_cal": 12,
-        "standing": false,
-        "hrv": null,
-        "sleep_stage": null,
-        "is_sleeping": false
-      }
-    }
-  ],
-  "defaults": {
-    "sourceType": "health",
-    "locus": "personal/health",
-    "connector": "health"
-  }
-}
+| Setting | Value |
+|---------|-------|
+| **URL** | `https://your-locigram-host/api/webhook/hae` |
+| **Headers** | `Authorization: Bearer <your_palace_token>` |
+| **Data Type** | Health Metrics |
+| **Export Format** | JSON |
+| **Export Version** | Version 2 |
+| **Batch Requests** | ON |
+| **Sync Cadence** | Every 6 hours (recommended) |
+
+Select **all metrics** you want tracked — steps, heart rate, resting HR, HRV, VO2 max,
+blood oxygen, exercise time, stand hours, flights climbed, walking speed, body measurements, etc.
+
+### 3. Create Workouts Automation (Optional)
+
+Create a **second** REST API automation with the same URL and auth, but set **Data Type** to **Workouts**.
+
+| Setting | Value |
+|---------|-------|
+| **Include Route Data** | ON (for GPS tracks) |
+| **Include Workout Metrics** | ON (HR during workout) |
+
+### 4. Backfill Historical Data
+
+Hit **Manual Export** with a past date range to import history.
+Dedup is automatic — re-syncing the same dates won't create duplicates.
+
+### 5. Verify
+
+```bash
+curl -s "https://your-locigram-host/api/webhook/hae" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"data": {"metrics": []}}' 
+# → {"ok":true,"ingested":0,"message":"No data points in payload"}
 ```
 
-## iOS Shortcut Build Guide
+## What Gets Ingested
 
-### Prerequisites
-- iPhone with iOS 17+ and Shortcuts app
-- Apple Watch paired (for HR, HRV, sleep stage data)
-- HealthKit permissions granted to Shortcuts
-- Locigram server URL and palace API token
+### Health Metrics (150+)
 
-### Step-by-Step Build
+The endpoint handles the app's full metric catalog with typed parsing for special formats:
 
-#### 1. Create the Shortcut
-- Open **Shortcuts** app → tap **+** → name it "Health → Locigram"
+| Metric Type | Fields Stored | Example |
+|-------------|---------------|---------|
+| **Heart Rate** | Avg, Min, Max per interval | `avg 72 bpm (min 55, max 112)` |
+| **Sleep Analysis** | deep, REM, core, awake minutes + bed times | `5.8h sleep (deep 68min, REM 82min)` |
+| **Blood Pressure** | systolic, diastolic | `120/80 mmHg` |
+| **All others** | qty + units | `8,421 count`, `42 ms`, `98 %` |
 
-#### 2. Set Variables
-Add these **Text** actions at the top:
+Common metrics: `step_count`, `heart_rate`, `resting_heart_rate`, `heart_rate_variability`,
+`vo2max`, `active_energy`, `apple_exercise_time`, `apple_stand_time`, `blood_oxygen_saturation`,
+`walking_speed`, `flights_climbed`, `walking_running_distance`, `respiratory_rate`,
+`weight_body_mass`, `body_fat_percentage`, `time_in_daylight`, `environmental_audio`,
+`mindful_minutes`, `apple_sleeping_wrist_temperature`, and 100+ more.
 
-| Variable | Value |
-|----------|-------|
-| `ServerURL` | `https://your-locigram-server/api/webhook/health` |
-| `APIToken` | Your palace API token (or store in Keychain) |
-| `Today` | Format Date (Current Date, `yyyy-MM-dd`) |
-| `PersonName` | `Andrew Le` |
+### Workouts
 
-#### 3. Build the Time Loop
+| Field | Description |
+|-------|-------------|
+| `name` | Workout type (Walking, Running, Cycling, etc.) |
+| `duration` | Duration in seconds |
+| `distance` | Distance in meters |
+| `activeEnergy` | Active calories burned |
+| `avgHeartRate` / `maxHeartRate` | Heart rate during workout |
+| `stepCount` | Steps during workout |
+| `route` | GPS coordinates (if available) |
 
-**Repeat 48 times** (index variable: `SlotIndex`):
+## Data Model
 
-Inside the loop:
+Every health data point becomes a Locigram memory with:
 
-```
-① Calculate slot times:
-   - Set "HourNum" = (SlotIndex - 1) ÷ 2 (round down)
-   - Set "MinNum" = ((SlotIndex - 1) mod 2) × 30
-   - Set "SlotStart" = Date from "Today HourNum:MinNum"  
-   - Set "SlotEnd" = SlotStart + 30 minutes
+- **`content`** — Human-readable summary (e.g., `"Steps: 8,421 count"`)
+- **`predicate`** — Metric name (e.g., `step_count`, `heart_rate`, `workout`)
+- **`subject`** — Person name (configured via `HEALTH_PERSON_NAME` env var)
+- **`objectVal`** — Value string for SPO triple
+- **`sourceRef`** — Dedup key: `hae:<metric>:<ISO timestamp>` (prevents duplicates)
+- **`locus`** — `personal/health` (always)
+- **`durabilityClass`** — `permanent` (health data never decays)
+- **`metadata`** — Full raw JSONB with numeric values for SQL analytics
 
-② Query HealthKit for each metric:
-   - "Find Health Samples" where:
-     Type = Steps, Start Date ≥ SlotStart, End Date < SlotEnd
-     → Sum the values → store as "SlotSteps"
-   
-   - "Find Health Samples" where:
-     Type = Heart Rate, Start Date ≥ SlotStart, End Date < SlotEnd
-     → Calculate Average → "HRAvg"
-     → Calculate Minimum → "HRMin"  
-     → Calculate Maximum → "HRMax"
-   
-   - "Find Health Samples" where:
-     Type = Active Energy, Start Date ≥ SlotStart, End Date < SlotEnd
-     → Sum → "ActiveCal"
-   
-   - "Find Health Samples" where:
-     Type = Heart Rate Variability, Start Date ≥ SlotStart, End Date < SlotEnd
-     → Get Last → "HRV"
-   
-   - "Find Health Samples" where:
-     Type = Sleep Analysis, Start Date ≥ SlotStart, End Date < SlotEnd
-     → Get Last → "SleepStage" (InBed/Asleep/Awake/Core/Deep/REM)
+### Metadata JSONB Keys
 
-③ Build the content string:
-   If SleepStage is not empty:
-     "{HourNum}:{MinNum} – {steps} steps, avg HR {HRAvg}bpm (min {HRMin}, max {HRMax}), sleep: {SleepStage}, HRV {HRV}ms"
-   Otherwise:
-     "{HourNum}:{MinNum} – {steps} steps, avg HR {HRAvg}bpm (min {HRMin}, max {HRMax}), standing: {standing}, {ActiveCal} active cal"
+| Key | Present On | Type |
+|-----|-----------|------|
+| `value` | Generic metrics | number |
+| `hr_avg`, `hr_min`, `hr_max` | Heart rate | number |
+| `deep_min`, `rem_min`, `core_min`, `awake_min` | Sleep | number |
+| `in_bed_start`, `in_bed_end`, `sleep_start`, `sleep_end` | Sleep | ISO string |
+| `systolic`, `diastolic` | Blood pressure | number |
+| `workout_type`, `duration_sec`, `distance_m`, `active_energy` | Workouts | varies |
+| `avg_hr`, `max_hr`, `step_count`, `has_route` | Workouts | varies |
+| `metric` | All | string (metric name) |
+| `units` | All | string |
+| `source_device` | All | string (e.g., "Apple Watch") |
+| `connector` | All | `"health-auto-export"` |
 
-④ Build JSON object for this slot:
-   Use "Dictionary" action:
-   {
-     "content": <content string>,
-     "occurredAt": <SlotStart in ISO 8601>,
-     "sourceRef": "health:{Today}:{HourNum}:{MinNum}",
-     "preClassified": {
-       "subject": PersonName,
-       "predicate": "health_slot",
-       "objectVal": <summary>,
-       "entities": [PersonName],
-       "importance": "normal",
-       "durabilityClass": "permanent",
-       "category": "observation"
-     },
-     "metadata": {
-       "hour": HourNum,
-       "minute": MinNum,
-       "steps": SlotSteps,
-       "hr_avg": HRAvg,
-       "hr_min": HRMin,
-       "hr_max": HRMax,
-       "active_cal": ActiveCal,
-       "standing": <bool>,
-       "hrv": HRV,
-       "sleep_stage": SleepStage,
-       "is_sleeping": <bool>
-     }
-   }
+## Environment Variables
 
-⑤ Append to "AllSlots" list variable
-```
-
-#### 4. Build Final Payload & POST
-
-After the loop:
-
-```
-① Build "Payload" dictionary:
-   {
-     "memories": AllSlots,
-     "defaults": {
-       "sourceType": "health",
-       "locus": "personal/health",
-       "connector": "health"
-     }
-   }
-
-② "Get Contents of URL":
-   URL: ServerURL
-   Method: POST
-   Headers:
-     Content-Type: application/json
-     Authorization: Bearer {APIToken}
-   Request Body: JSON → Payload
-```
-
-#### 5. Set Up Automation
-
-- Open **Shortcuts** → **Automation** tab
-- Tap **+** → **Time of Day** → **11:30 PM** → **Daily**
-- Run "Health → Locigram"
-- Toggle **Run Immediately** (no confirmation prompt)
-
-### Tips
-
-- **First run:** Grant all HealthKit permissions when prompted. The Shortcut will ask for
-  Steps, Heart Rate, Active Energy, HRV, and Sleep Analysis access.
-- **No Apple Watch?** Steps and Active Cal still work from iPhone. HR, HRV, and Sleep
-  will be empty for those slots.
-- **Battery impact:** Minimal — one Shortcut run at 11:30pm, reads cached HealthKit data.
-- **Dedup safety:** Each slot has a unique `sourceRef` (`health:2026-03-12:14:00`), so
-  re-running the Shortcut won't create duplicates.
-- **Time zones:** `occurredAt` should be UTC. The Shortcut's "Format Date" with
-  ISO 8601 format and UTC timezone handles this.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HEALTH_PERSON_NAME` | `Owner` | Name used as subject in SPO triples |
 
 ## SQL Views for Trend Analysis
+
+These views query the raw health data for patterns. Create them on your Locigram Postgres instance.
 
 ### Hourly Activity Pattern (find dead zones)
 
 ```sql
 CREATE OR REPLACE VIEW health_hourly_pattern AS
 SELECT 
-  (metadata->>'hour')::int as hour,
-  (metadata->>'minute')::int as minute,
-  ROUND(AVG((metadata->>'steps')::numeric)) as avg_steps,
-  ROUND(AVG((metadata->>'hr_avg')::numeric), 1) as avg_hr,
-  ROUND(AVG(NULLIF((metadata->>'active_cal')::numeric, 0)), 1) as avg_cal,
-  ROUND(AVG(CASE WHEN (metadata->>'standing')::boolean THEN 1 ELSE 0 END) * 100, 1) as pct_standing,
-  COUNT(*) as days_sampled
+  EXTRACT(hour FROM occurred_at AT TIME ZONE 'America/Los_Angeles')::int as hour,
+  ROUND(AVG((metadata->>'value')::numeric) FILTER (WHERE predicate = 'step_count')) as avg_steps,
+  ROUND(AVG((metadata->>'hr_avg')::numeric) FILTER (WHERE predicate = 'heart_rate'), 1) as avg_hr,
+  COUNT(DISTINCT occurred_at::date) as days_sampled
 FROM locigrams
-WHERE predicate = 'health_slot'
-  AND source_type = 'health'
-GROUP BY (metadata->>'hour')::int, (metadata->>'minute')::int
-ORDER BY hour, minute;
+WHERE source_type = 'health'
+  AND metadata->>'connector' = 'health-auto-export'
+GROUP BY EXTRACT(hour FROM occurred_at AT TIME ZONE 'America/Los_Angeles')::int
+ORDER BY hour;
 ```
 
 ### Sleep Quality Over Time
@@ -258,49 +153,45 @@ ORDER BY hour, minute;
 ```sql
 CREATE OR REPLACE VIEW health_sleep_quality AS
 SELECT 
-  DATE(occurred_at AT TIME ZONE 'America/Los_Angeles') as night,
-  COUNT(*) FILTER (WHERE metadata->>'sleep_stage' = 'deep') * 30 as deep_min,
-  COUNT(*) FILTER (WHERE metadata->>'sleep_stage' = 'rem') * 30 as rem_min,
-  COUNT(*) FILTER (WHERE metadata->>'sleep_stage' = 'core') * 30 as core_min,
-  COUNT(*) FILTER (WHERE metadata->>'sleep_stage' = 'awake') * 30 as awake_min,
-  COUNT(*) FILTER (WHERE metadata->>'is_sleeping' = 'true') * 30 as total_sleep_min,
-  ROUND(AVG(NULLIF((metadata->>'hr_avg')::numeric, 0)) FILTER (WHERE metadata->>'is_sleeping' = 'true'), 1) as avg_sleeping_hr,
-  ROUND(MIN(NULLIF((metadata->>'hr_min')::numeric, 0)) FILTER (WHERE metadata->>'is_sleeping' = 'true'), 1) as lowest_sleeping_hr
+  occurred_at::date as night,
+  (metadata->>'deep_min')::numeric as deep_min,
+  (metadata->>'rem_min')::numeric as rem_min,
+  (metadata->>'core_min')::numeric as core_min,
+  (metadata->>'awake_min')::numeric as awake_min,
+  (metadata->>'total_sleep_min')::numeric as total_sleep_min,
+  content
 FROM locigrams
-WHERE predicate = 'health_slot'
+WHERE predicate = 'sleep_analysis'
   AND source_type = 'health'
-  AND metadata->>'is_sleeping' = 'true'
-GROUP BY DATE(occurred_at AT TIME ZONE 'America/Los_Angeles')
-ORDER BY night DESC;
+ORDER BY occurred_at DESC;
 ```
 
-### Daily Step Totals + Trend
+### Daily Resting HR + HRV Trend
 
 ```sql
-CREATE OR REPLACE VIEW health_daily_steps AS
+CREATE OR REPLACE VIEW health_vitals_trend AS
 SELECT 
-  DATE(occurred_at AT TIME ZONE 'America/Los_Angeles') as day,
-  SUM((metadata->>'steps')::int) as total_steps,
-  ROUND(AVG((metadata->>'hr_avg')::numeric), 1) as avg_hr_all_day,
-  SUM((metadata->>'active_cal')::int) as total_active_cal,
-  ROUND(AVG(NULLIF((metadata->>'hrv')::numeric, 0)), 1) as avg_hrv
+  occurred_at::date as day,
+  MAX(CASE WHEN predicate = 'resting_heart_rate' THEN (metadata->>'value')::numeric END) as resting_hr,
+  MAX(CASE WHEN predicate = 'heart_rate_variability' THEN (metadata->>'value')::numeric END) as hrv_ms,
+  MAX(CASE WHEN predicate = 'blood_oxygen_saturation' THEN (metadata->>'value')::numeric END) as spo2_pct,
+  MAX(CASE WHEN predicate = 'vo2max' THEN (metadata->>'value')::numeric END) as vo2max
 FROM locigrams
-WHERE predicate = 'health_slot'
-  AND source_type = 'health'
-GROUP BY DATE(occurred_at AT TIME ZONE 'America/Los_Angeles')
+WHERE source_type = 'health'
+  AND predicate IN ('resting_heart_rate', 'heart_rate_variability', 'blood_oxygen_saturation', 'vo2max')
+GROUP BY occurred_at::date
 ORDER BY day DESC;
 ```
 
 ### Cross-Reference: Activity vs Browsing/Location
 
 ```sql
--- What were you doing during your lowest-activity periods?
+-- What were you doing during your lowest-energy periods?
 CREATE OR REPLACE VIEW health_activity_correlation AS
 SELECT 
   h.occurred_at,
-  (h.metadata->>'hour')::int || ':' || LPAD((h.metadata->>'minute')::text, 2, '0') as time_slot,
-  (h.metadata->>'steps')::int as steps,
-  (h.metadata->>'hr_avg')::numeric as hr,
+  h.predicate as metric,
+  h.object_val as value,
   LEFT(a.content, 120) as concurrent_activity,
   a.source_type as activity_type
 FROM locigrams h
@@ -313,34 +204,57 @@ LEFT JOIN LATERAL (
   ORDER BY occurred_at
   LIMIT 1
 ) a ON true
-WHERE h.predicate = 'health_slot'
-  AND h.source_type = 'health'
+WHERE h.source_type = 'health'
+  AND h.metadata->>'connector' = 'health-auto-export'
 ORDER BY h.occurred_at DESC;
 ```
 
 ### Walk Opportunity Finder
 
 ```sql
--- Consistently low-activity slots during work hours = walking opportunities
+-- Low-activity work-hour slots = walking opportunities
 CREATE OR REPLACE VIEW health_walk_opportunities AS
 SELECT 
-  (metadata->>'hour')::int as hour,
-  (metadata->>'minute')::int as minute,
-  ROUND(AVG((metadata->>'steps')::numeric)) as avg_steps,
-  ROUND(AVG((metadata->>'hr_avg')::numeric), 1) as avg_hr,
-  COUNT(*) as days_sampled,
+  EXTRACT(hour FROM occurred_at AT TIME ZONE 'America/Los_Angeles')::int as hour,
+  ROUND(AVG((metadata->>'value')::numeric)) as avg_steps,
+  COUNT(*) as samples,
   CASE 
-    WHEN AVG((metadata->>'steps')::numeric) < 100 THEN '🔴 sedentary — great walk opportunity'
-    WHEN AVG((metadata->>'steps')::numeric) < 300 THEN '🟡 low activity — could add movement'
-    WHEN AVG((metadata->>'steps')::numeric) < 600 THEN '🟢 moderate'
+    WHEN AVG((metadata->>'value')::numeric) < 100 THEN '🔴 sedentary — walk opportunity'
+    WHEN AVG((metadata->>'value')::numeric) < 500 THEN '🟡 low activity'
+    WHEN AVG((metadata->>'value')::numeric) < 1000 THEN '🟢 moderate'
     ELSE '💪 active'
   END as recommendation
 FROM locigrams
-WHERE predicate = 'health_slot'
+WHERE predicate = 'step_count'
   AND source_type = 'health'
-  AND (metadata->>'hour')::int BETWEEN 8 AND 18
-  AND (metadata->>'is_sleeping')::text != 'true'
-GROUP BY (metadata->>'hour')::int, (metadata->>'minute')::int
-HAVING COUNT(*) >= 3  -- need at least 3 days of data
+  AND EXTRACT(hour FROM occurred_at AT TIME ZONE 'America/Los_Angeles') BETWEEN 8 AND 18
+GROUP BY EXTRACT(hour FROM occurred_at AT TIME ZONE 'America/Los_Angeles')::int
+HAVING COUNT(*) >= 3
 ORDER BY avg_steps ASC;
+```
+
+## Deduplication
+
+Each data point gets a sourceRef of `hae:<metric_name>:<ISO_timestamp>`. The pipeline checks
+for existing sourceRefs before storing. Re-syncing the same date range is safe — duplicates
+are automatically skipped.
+
+## Querying Health Data
+
+### Via Locigram MCP (semantic)
+```
+memory_recall("how's my sleep been this week?", locus: "personal/health")
+```
+
+### Via Postgres (structured)
+```sql
+-- All health data, newest first
+SELECT predicate, object_val, occurred_at, metadata
+FROM locigrams WHERE source_type = 'health' ORDER BY occurred_at DESC;
+
+-- Specific metric
+SELECT * FROM locigrams WHERE predicate = 'resting_heart_rate' ORDER BY occurred_at DESC;
+
+-- Workouts
+SELECT * FROM locigrams WHERE predicate = 'workout' ORDER BY occurred_at DESC;
 ```

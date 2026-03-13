@@ -23,7 +23,7 @@ AI assistants lose context when a session ends or a platform switches. Locigram 
 - [**MCP & Integration**](docs/mcp.md) — Connecting Claude, ChatGPT, and OpenClaw.
 - [**Architecture**](docs/architecture.md) — Deep dive into the stack and data flow.
 - [**Connector API**](docs/connector-api.md) — Building connectors: webhook, external daemon, or bundled plugin.
-- [**Apple Health**](docs/health-connector.md) — iOS Shortcuts → granular health data (48 data points/day).
+- [**Apple Health**](docs/health-connector.md) — Automatic health data ingestion via Health Auto Export app.
 
 ---
 
@@ -141,7 +141,7 @@ See [Connectors documentation](docs/connectors.md) for the full API reference an
 
 ### Webhook Ingestion
 
-For data sources that can make HTTP calls (iOS Shortcuts, Zapier, cron scripts, IoT),
+For data sources that can make HTTP calls (apps, Zapier, cron scripts, IoT),
 webhooks are the simplest ingestion path — no connector code needed:
 
 ```bash
@@ -160,12 +160,40 @@ curl -X POST /api/webhook/health \
 |----------|-------|---------|
 | `POST /api/webhook/ingest` | (you set) | Generic data |
 | `POST /api/webhook/health` | `personal/health` | Apple Health, Fitbit, wearables |
+| `POST /api/webhook/hae` | `personal/health` | [Health Auto Export](https://www.healthyapps.dev/) iOS app (native format) |
 | `POST /api/webhook/location` | `personal/location` | GPS, geofence, check-ins |
 | `POST /api/webhook/browsing` | `personal/browsing` | Browser history, bookmarks |
 
 Supports single or batch mode (up to 100 per POST), automatic dedup via content hash,
 and `preClassified` payloads that skip LLM extraction for structured data.
 See [Connector API](docs/connector-api.md) for the full reference.
+
+### Apple Health via Health Auto Export
+
+The recommended path for Apple Health data is the [Health Auto Export](https://www.healthyapps.dev/) iOS app ($3).
+It handles all HealthKit querying and sends data directly to Locigram via REST API.
+
+**Setup:**
+1. Install Health Auto Export from the App Store
+2. Create a **REST API** automation:
+   - **URL:** `https://your-locigram-host/api/webhook/hae`
+   - **Header:** `Authorization: Bearer <your_palace_token>`
+   - **Data Type:** Health Metrics (create a second for Workouts)
+   - **Export Format:** JSON
+   - **Batch Requests:** ON
+3. Select all metrics you want tracked
+4. Set sync cadence (e.g., every 6 hours)
+5. Hit **Manual Export** with a past date range to backfill history
+
+**What gets ingested:**
+- **150+ health metrics** — steps, heart rate (avg/min/max), resting HR, HRV, VO2 max, blood oxygen, exercise time, stand hours, flights climbed, walking speed, body measurements, nutrition, and more
+- **Sleep analysis** — deep, REM, core, and awake stages with bed times
+- **Blood pressure** — systolic/diastolic
+- **Workouts** — type, duration, distance, calories, heart rate, step count, GPS route detection
+
+All data stored as preClassified memories with SPO triples, permanent durability, and full raw values in metadata JSONB for SQL analytics. Automatic dedup via `hae:<metric>:<timestamp>` sourceRef — safe to re-sync the same date range.
+
+See [Apple Health docs](docs/health-connector.md) for SQL views and analysis queries.
 
 ---
 
