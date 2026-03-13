@@ -171,23 +171,33 @@ function transformMetric(metric: MetricData, personName: string): RawMemory[] {
       })
     } else if (metric.name === 'sleep_analysis') {
       const sleep = sample as SleepMetric
-      const totalSleep = sleep.core + sleep.rem + sleep.deep
-      const totalHrs = (totalSleep / 60).toFixed(1)
+      // The app sends sleep stage values in the same unit as metric.units.
+      // If units = "hr", values are hours (e.g. core: 2.81 = 2h49m).
+      // If units = "min", values are already minutes.
+      // Normalize everything to minutes for storage and display.
+      const isHours = metric.units === 'hr'
+      const deepMin = Math.round(isHours ? sleep.deep * 60 : sleep.deep)
+      const remMin = Math.round(isHours ? sleep.rem * 60 : sleep.rem)
+      const coreMin = Math.round(isHours ? sleep.core * 60 : sleep.core)
+      const awakeMin = Math.round(isHours ? sleep.awake * 60 : sleep.awake)
+      const inBedMin = Math.round(isHours ? sleep.inBed * 60 : sleep.inBed)
+      const totalSleepMin = deepMin + remMin + coreMin
+      const totalHrs = (totalSleepMin / 60).toFixed(1)
       memories.push({
-        content: `${label}: ${totalHrs}h total (deep ${sleep.deep}min, REM ${sleep.rem}min, core ${sleep.core}min, awake ${sleep.awake}min). In bed ${new Date(sleep.inBedStart).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} to ${new Date(sleep.inBedEnd).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}.`,
+        content: `${label}: ${totalHrs}h total (deep ${deepMin}min, REM ${remMin}min, core ${coreMin}min, awake ${awakeMin}min). In bed ${new Date(sleep.inBedStart).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' })} to ${new Date(sleep.inBedEnd).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' })}.`,
         sourceType: 'health' as any,
         sourceRef: `hae:${metric.name}:${date.toISOString()}`,
         occurredAt: date,
         metadata: {
           connector: 'health-auto-export',
           metric: metric.name,
-          units: metric.units,
-          deep_min: sleep.deep,
-          rem_min: sleep.rem,
-          core_min: sleep.core,
-          awake_min: sleep.awake,
-          in_bed_min: sleep.inBed,
-          total_sleep_min: totalSleep,
+          units: 'min',
+          deep_min: deepMin,
+          rem_min: remMin,
+          core_min: coreMin,
+          awake_min: awakeMin,
+          in_bed_min: inBedMin,
+          total_sleep_min: totalSleepMin,
           in_bed_start: sleep.inBedStart,
           in_bed_end: sleep.inBedEnd,
           sleep_start: sleep.sleepStart,
@@ -202,7 +212,7 @@ function transformMetric(metric: MetricData, personName: string): RawMemory[] {
           category: 'observation',
           subject: personName,
           predicate: 'sleep_analysis',
-          objectVal: `${totalHrs}h sleep (deep ${sleep.deep}min, REM ${sleep.rem}min, core ${sleep.core}min)`,
+          objectVal: `${totalHrs}h sleep (deep ${deepMin}min, REM ${remMin}min, core ${coreMin}min)`,
           durabilityClass: 'permanent',
         },
       })
