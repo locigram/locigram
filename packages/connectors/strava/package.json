@@ -1,0 +1,12 @@
+{
+  "name": "@locigram/connector-strava",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@locigram/core": "workspace:*",
+    "@locigram/pipeline": "workspace:*",
+    "hono": "^4.0.0"
+  }
+}

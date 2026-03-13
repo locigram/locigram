@@ -11,6 +11,7 @@ import type { PipelineConfig, LLMConfig } from '@locigram/pipeline'
 import { startTruthEngine } from '@locigram/truth'
 import { startMaintenance } from './maintenance'
 import { buildWebhookRoute, buildHealthAutoExportRoute } from '@locigram/connector-webhook'
+import { buildStravaWebhookRoute, buildStravaApiRoute } from '@locigram/connector-strava'
 import { palaceMiddleware } from './middleware/palace'
 import { authMiddleware } from './middleware/auth'
 import { healthRoute } from './routes/health'
@@ -157,6 +158,8 @@ export function createApp(config: AppConfig) {
   app.route('/api/webhook/hae', buildHealthAutoExportRoute({
     personName: process.env.HEALTH_PERSON_NAME ?? 'Owner',
   }))
+  app.route('/api/webhook/strava', buildStravaWebhookRoute())
+  app.route('/api/strava', buildStravaApiRoute())
   app.route('/api/bootstrap', bootstrapRoute)
   app.route('/api/connectors', connectorsRoute)
   app.route('/api/context/active', activeContextRoute)
