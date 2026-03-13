@@ -11,6 +11,7 @@
     "@hono/zod-validator": "latest",
     "@locigram/connector-gmail": "workspace:*",
     "@locigram/connector-microsoft365": "workspace:*",
+    "@locigram/connector-strava": "workspace:*",
     "@locigram/connector-webhook": "workspace:*",
     "@locigram/core": "workspace:*",
     "@locigram/db": "workspace:*",

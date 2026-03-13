@@ -85,6 +85,15 @@
         "@locigram/core": "workspace:*",
       },
     },
+    "packages/connectors/strava": {
+      "name": "@locigram/connector-strava",
+      "version": "0.1.0",
+      "dependencies": {
+        "@locigram/core": "workspace:*",
+        "@locigram/pipeline": "workspace:*",
+        "hono": "^4.0.0",
+      },
+    },
     "packages/connectors/surudb": {
       "name": "@locigram/connector-surudb",
       "version": "0.1.0",
@@ -151,6 +160,7 @@
         "@hono/zod-validator": "latest",
         "@locigram/connector-gmail": "workspace:*",
         "@locigram/connector-microsoft365": "workspace:*",
+        "@locigram/connector-strava": "workspace:*",
         "@locigram/connector-webhook": "workspace:*",
         "@locigram/core": "workspace:*",
         "@locigram/db": "workspace:*",
@@ -273,6 +283,8 @@
     "@locigram/connector-secondbrain-sync": ["@locigram/connector-secondbrain-sync@workspace:packages/connectors/secondbrain-sync"],
 
     "@locigram/connector-sms": ["@locigram/connector-sms@workspace:packages/connectors/sms"],
+
+    "@locigram/connector-strava": ["@locigram/connector-strava@workspace:packages/connectors/strava"],
 
     "@locigram/connector-surudb": ["@locigram/connector-surudb@workspace:packages/connectors/surudb"],
 
