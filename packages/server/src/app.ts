@@ -206,14 +206,33 @@ export function createApp(config: AppConfig) {
       const text = await res.text()
       const parsed = JSON.parse(text)
       const content = parsed.choices?.[0]?.message?.content ?? ''
-      // Strip <think> tags (Qwen3 native thinking blocks)
+      // Strip <think>...</think> XML tags (Qwen3 native thinking blocks)
       let cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
-      // Strip plain-text thinking blocks — "Thinking Process:" up to first blank line after content
-      cleaned = cleaned.replace(/^Thinking Process:[\s\S]*?(?=\n\n[^*\d\s])/m, '').trim()
-      // Final fallback: if still starts with "Thinking Process:", strip to first non-bullet paragraph
-      if (cleaned.startsWith('Thinking Process:')) {
-        const firstRealPara = cleaned.search(/\n\n(?![\s*\d])/)
-        if (firstRealPara !== -1) cleaned = cleaned.slice(firstRealPara).trim()
+
+      // Strip everything before "**Domain:**" if present (catches all thinking preambles)
+      const domainIdx = cleaned.indexOf('**Domain:**')
+      if (domainIdx > 0) {
+        cleaned = cleaned.slice(domainIdx).trim()
+      }
+
+      // Fallback: strip "Thinking Process:" blocks by finding the actual summary start
+      if (cleaned.startsWith('Thinking Process:') || cleaned.startsWith('Thinking process:')) {
+        // Look for common summary markers
+        const markers = ['**Domain:**', '## Summary', '## Current Task', '### Current Task', '**Current Task']
+        for (const marker of markers) {
+          const idx = cleaned.indexOf(marker)
+          if (idx > 0) {
+            cleaned = cleaned.slice(idx).trim()
+            break
+          }
+        }
+        // Last resort: find first double newline followed by **Domain
+        if (cleaned.startsWith('Thinking')) {
+          const boldStart = cleaned.search(/\n\n\*\*Domain/)
+          if (boldStart !== -1) {
+            cleaned = cleaned.slice(boldStart).trim()
+          }
+        }
       }
 
       // Split into narrative + structured
