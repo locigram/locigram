@@ -198,7 +198,10 @@ export function createApp(config: AppConfig) {
         },
         body: JSON.stringify({
           model,
-          messages: [{ role: 'user', content: noThink ? wrappedPrompt + ' /no_think' : wrappedPrompt }],
+          messages: [
+            { role: 'system', content: 'You are a concise summarizer. Output ONLY the requested summary. Do not show your reasoning, analysis steps, or thinking process. Start your response directly with the summary content.' },
+            { role: 'user', content: wrappedPrompt },
+          ],
           max_tokens: maxTokens ?? 2000,
         }),
       })
@@ -233,6 +236,28 @@ export function createApp(config: AppConfig) {
             cleaned = cleaned.slice(boldStart).trim()
           }
         }
+      }
+
+      // Final fallback: if we still only have thinking text, extract the draft/refined summary from within it
+      if (cleaned.startsWith('Thinking') || cleaned.length < 50) {
+        // Look for draft summary patterns within the original content
+        const draftPatterns = [
+          /(?:Draft Summary:|Refined.*?:|Summary:)\s*\n\s*([\s\S]+?)(?:\n\s*\d+\.\s+\*\*|\n\s*$)/i,
+          /(?:Draft Summary:|Summary:)\s*\n?\s*\*?\s*([\s\S]+?)(?:\n\s*(?:\d+\.|Critique|Refine|Review))/i,
+        ]
+        for (const pattern of draftPatterns) {
+          const match = content.match(pattern)
+          if (match?.[1] && match[1].trim().length > 50) {
+            cleaned = match[1].trim()
+            break
+          }
+        }
+      }
+
+      // Absolute last resort: if cleaned is still garbage or too short, return error
+      if (cleaned.length < 30 || cleaned.startsWith('Thinking')) {
+        console.warn('[api/internal/summarize] LLM output was entirely thinking — no usable summary extracted')
+        return c.json({ error: 'LLM produced no usable summary', narrative: null, structured: null }, 502)
       }
 
       // Split into narrative + structured
